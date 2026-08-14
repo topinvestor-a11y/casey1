@@ -1,0 +1,779 @@
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import {
+  Sprout, Sun, Moon, ArrowLeftRight, Check, X, ChevronLeft, ChevronRight,
+  Users, CalendarDays, Send, Inbox, Info, Search, RotateCcw, Clock3,
+  ChevronDown, Leaf, LogOut, CircleDot, Sparkles, RefreshCw, AlertTriangle,
+} from "lucide-react";
+import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek } from "./api";
+
+const APP_NAME = "우리 근무표";
+const TAG_HUES = ["#3E6B49", "#46527D", "#C68A3D", "#8A5A6B", "#3E7A78", "#7A6B3E", "#5B5B8A"];
+const ME_KEY = "wt-me";
+const POLL_MS = 30000;
+
+/* ============================== HELPERS ============================== */
+function hueFor(id) {
+  return TAG_HUES[id % TAG_HUES.length];
+}
+
+function buildWeeks(shifts) {
+  const dates = Array.from(new Set(shifts.map((s) => s.date))).sort();
+  const weeks = [];
+  for (let i = 0; i < dates.length; i += 7) {
+    const chunk = dates.slice(i, i + 7);
+    if (chunk.length === 0) continue;
+    const fmt = (d) => {
+      const [, m, day] = d.split("-");
+      return `${m}.${day}`;
+    };
+    weeks.push({
+      label: `${weeks.length + 1}주차`,
+      range: `${fmt(chunk[0])} ~ ${fmt(chunk[chunk.length - 1])}`,
+      dates: chunk,
+    });
+  }
+  return weeks;
+}
+
+function isWeekend(dow) {
+  return dow === "토" || dow === "일";
+}
+
+function dateAdd(dateStr, days) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+// Client only needs to know *whether* a next week can be offered — the
+// actual rotation math runs server-side in generate-next-week.js.
+function planNextWeek(shifts) {
+  const dates = Array.from(new Set(shifts.map((s) => s.date))).sort();
+  if (dates.length === 0) return null;
+  const lastDate = dates[dates.length - 1];
+  const nextMonday = dateAdd(lastDate, 1);
+  if (dates.includes(nextMonday)) return null;
+  const weekDates = Array.from({ length: 7 }, (_, i) => dateAdd(nextMonday, i));
+  return { nextMonday, weekDates };
+}
+
+function labelForFactory(codeTable) {
+  return (code, period) => {
+    const entry = codeTable[code];
+    if (!entry) return code;
+    return period === "주간" ? entry.dayLabel : entry.nightLabel || entry.dayLabel;
+  };
+}
+
+const CODE_HOURS = {
+  "1C": { day: "05:00–15:00", night: "15:00–01:00" },
+  "3A": { day: "05:00–15:00", night: "15:00–01:00" },
+  "3B": { day: "05:00–15:00", night: "15:00–20:00" },
+  N: { day: "06:00–18:00", night: null },
+  N1: { day: "06:00–18:00", night: null },
+};
+function hoursFor(code, period) {
+  const h = CODE_HOURS[code];
+  if (!h) return null;
+  return period === "주간" ? h.day : h.night;
+}
+
+/* ============================== PLANT TAG (signature element) ============================== */
+function PlantTag({ name, hue, size = "md", active = false, onClick, disabled }) {
+  const dims = size === "lg" ? { w: 148, h: 92, fs: 17 } : size === "sm" ? { w: 96, h: 60, fs: 12 } : { w: 118, h: 72, fs: 14 };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="tag-btn"
+      style={{ width: dims.w, opacity: disabled ? 0.45 : 1, cursor: disabled ? "default" : onClick ? "pointer" : "default" }}
+    >
+      <div
+        className="tag-card"
+        style={{
+          height: dims.h,
+          borderColor: active ? hue : "var(--line)",
+          boxShadow: active ? `0 0 0 2px ${hue}` : "0 2px 0 var(--line)",
+          background: active ? `${hue}14` : "var(--surface)",
+        }}
+      >
+        <span className="tag-hole" style={{ borderColor: hue }} />
+        <div className="tag-text">
+          <div style={{ fontSize: dims.fs, fontFamily: "var(--font-display)", color: "var(--ink)", fontWeight: 600, lineHeight: 1.15 }}>
+            {name}
+          </div>
+        </div>
+        <span className="tag-string" style={{ background: hue }} />
+      </div>
+    </button>
+  );
+}
+
+/* ============================== SHIFT CHIP ============================== */
+function ShiftChip({ shift, compact }) {
+  if (!shift) return <span className="chip chip-empty">비번</span>;
+  const isNight = shift.period === "야간";
+  const hrs = hoursFor(shift.code, shift.period);
+  return (
+    <span className={`chip ${isNight ? "chip-night" : "chip-day"}`} title={hrs ? `${shift.label} · ${hrs}` : shift.label}>
+      {isNight ? <Moon size={11} /> : <Sun size={11} />}
+      <span className="chip-code">{shift.code}</span>
+      {!compact && hrs && <span className="chip-hrs">{hrs}</span>}
+    </span>
+  );
+}
+
+/* ============================== MAIN APP ============================== */
+export default function App() {
+  const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+  const [me, setMe] = useState(null);
+  const [employees, setEmployees] = useState([]);
+  const [shifts, setShifts] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [codeTable, setCodeTable] = useState({});
+  const [tab, setTab] = useState("my");
+  const [weekIdx, setWeekIdx] = useState(0);
+  const [search, setSearch] = useState("");
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+
+  const labelFor = useMemo(() => labelForFactory(codeTable), [codeTable]);
+  const weeks = useMemo(() => buildWeeks(shifts), [shifts]);
+
+  const notify = useCallback((msg, tone = "ok") => {
+    setToast({ msg, tone });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
+  }, []);
+
+  const load = useCallback(async (opts = {}) => {
+    try {
+      const data = await fetchBootstrap();
+      setEmployees(data.employees);
+      setShifts(data.shifts);
+      setRequests(data.requests);
+      setCodeTable(data.codeTable);
+      setLoadError(null);
+      if (!opts.silent) setReady(true);
+    } catch (e) {
+      setLoadError(e.message || "데이터를 불러오지 못했어요.");
+      if (!opts.silent) setReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    const stored = localStorage.getItem(ME_KEY);
+    if (stored) {
+      try {
+        setMe(JSON.parse(stored));
+      } catch {
+        localStorage.removeItem(ME_KEY);
+      }
+    }
+    load();
+  }, [load]);
+
+  // Light polling so a swap someone else approves shows up without a manual refresh.
+  useEffect(() => {
+    const id = setInterval(() => load({ silent: true }), POLL_MS);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const chooseMe = useCallback((emp) => {
+    setMe(emp);
+    localStorage.setItem(ME_KEY, JSON.stringify(emp));
+  }, []);
+
+  const switchUser = useCallback(() => {
+    setMe(null);
+    localStorage.removeItem(ME_KEY);
+  }, []);
+
+  const nextWeekPlan = useMemo(() => planNextWeek(shifts), [shifts]);
+
+  const handleGenerateNextWeek = useCallback(async () => {
+    try {
+      const res = await generateNextWeek();
+      await load({ silent: true });
+      setWeekIdx((i) => i + 1);
+      notify(`${res.weekStart.slice(5)} 주 근무표를 자동 생성했어요.`);
+    } catch (e) {
+      notify(e.message || "생성에 실패했어요.", "warn");
+    }
+  }, [load, notify]);
+
+  const submitRequest = useCallback(
+    async ({ myShift, targetEmp, targetShift, memo }) => {
+      try {
+        await createRequest({
+          requesterId: me.id,
+          requesterName: me.name,
+          targetId: targetEmp.id,
+          targetName: targetEmp.name,
+          myDate: myShift.date,
+          myDow: myShift.dow,
+          myCode: myShift.code,
+          myPeriod: myShift.period,
+          targetDate: targetShift.date,
+          targetDow: targetShift.dow,
+          targetCode: targetShift.code,
+          targetPeriod: targetShift.period,
+          memo: memo || "",
+        });
+        await load({ silent: true });
+        notify("교환 요청을 보냈어요.");
+      } catch (e) {
+        notify(e.message || "요청을 보내지 못했어요.", "warn");
+      }
+    },
+    [me, load, notify]
+  );
+
+  const respond = useCallback(
+    async (reqId, accept) => {
+      try {
+        await respondToRequest(reqId, accept);
+        await load({ silent: true });
+        notify(accept ? "근무를 교환했어요." : "요청을 거절했어요.", accept ? "ok" : "warn");
+      } catch (e) {
+        notify(e.message || "처리하지 못했어요.", "warn");
+      }
+    },
+    [load, notify]
+  );
+
+  const cancel = useCallback(
+    async (reqId) => {
+      try {
+        await cancelRequest(reqId);
+        await load({ silent: true });
+        notify("요청을 취소했어요.", "warn");
+      } catch (e) {
+        notify(e.message || "취소하지 못했어요.", "warn");
+      }
+    },
+    [load, notify]
+  );
+
+  if (!ready) {
+    return (
+      <div className="wt-root" style={{ minHeight: 420, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, color: "var(--ink-soft)" }}>
+          <Sprout size={26} className="animate-pulse" />
+          <span style={{ fontSize: 13 }}>불러오는 중…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="wt-root" style={{ minHeight: 420, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, color: "var(--clay)", textAlign: "center" }}>
+          <AlertTriangle size={26} />
+          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{loadError}</span>
+          <button className="btn" onClick={() => load()}>다시 시도</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!me) {
+    return (
+      <div className="wt-root" style={{ minHeight: 480, padding: "28px 20px", borderRadius: 16 }}>
+        <NameGate employees={employees} search={search} setSearch={setSearch} onChoose={chooseMe} />
+      </div>
+    );
+  }
+
+  const myPendingIncoming = requests.filter((r) => r.targetId === me.id && r.status === "대기").length;
+
+  return (
+    <div className="wt-root" style={{ minHeight: 480, borderRadius: 16, overflow: "hidden" }}>
+      <TopBar me={me} onSwitch={switchUser} pending={myPendingIncoming} />
+      <div style={{ padding: "16px 18px 28px" }}>
+        <NavTabs tab={tab} setTab={setTab} pending={myPendingIncoming} />
+        <div style={{ marginTop: 16 }}>
+          {tab === "my" && (
+            <MyScheduleView me={me} shifts={shifts} weeks={weeks} weekIdx={weekIdx} setWeekIdx={setWeekIdx} />
+          )}
+          {tab === "all" && (
+            <AllScheduleView
+              employees={employees}
+              shifts={shifts}
+              weeks={weeks}
+              weekIdx={weekIdx}
+              setWeekIdx={setWeekIdx}
+              nextWeekPlan={nextWeekPlan}
+              onGenerate={handleGenerateNextWeek}
+            />
+          )}
+          {tab === "swap" && (
+            <SwapView
+              me={me}
+              employees={employees}
+              shifts={shifts}
+              weeks={weeks}
+              requests={requests}
+              labelFor={labelFor}
+              onSubmit={submitRequest}
+              onRespond={respond}
+              onCancel={cancel}
+            />
+          )}
+        </div>
+      </div>
+      {toast && <div className={`toast ${toast.tone === "warn" ? "toast-warn" : ""}`}>{toast.msg}</div>}
+    </div>
+  );
+}
+
+/* ============================== NAME GATE ============================== */
+function NameGate({ employees, search, setSearch, onChoose }) {
+  const filtered = employees.filter((e) => e.active !== false && e.name.includes(search.trim()));
+  return (
+    <div style={{ maxWidth: 720, margin: "0 auto" }}>
+      <div style={{ textAlign: "center", marginBottom: 22 }}>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "var(--forest)" }}>
+          <Sprout size={22} />
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 600, letterSpacing: ".08em" }}>
+            {APP_NAME.toUpperCase()}
+          </span>
+        </div>
+        <h1 style={{ fontFamily: "var(--font-display)", fontSize: 28, margin: "8px 0 4px", color: "var(--ink)" }}>
+          내 이름표를 골라주세요
+        </h1>
+        <p style={{ color: "var(--ink-soft)", fontSize: 13.5, margin: 0 }}>
+          이름표를 선택하면 이 기기에서 자동으로 기억해둘게요.
+        </p>
+      </div>
+      <div style={{ position: "relative", marginBottom: 18 }}>
+        <Search size={15} style={{ position: "absolute", left: 12, top: 12, color: "var(--ink-soft)" }} />
+        <input type="text" placeholder="이름 검색" value={search} onChange={(e) => setSearch(e.target.value)} style={{ paddingLeft: 34 }} />
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 2 }}>
+        {filtered.map((e) => (
+          <PlantTag key={e.id} name={e.name} hue={hueFor(e.id)} onClick={() => onChoose(e)} />
+        ))}
+        {filtered.length === 0 && <p style={{ color: "var(--ink-soft)", fontSize: 13, padding: 20 }}>일치하는 이름이 없어요.</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ============================== TOP BAR ============================== */
+function TopBar({ me, onSwitch, pending }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", background: "var(--forest)", color: "#fff" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Leaf size={18} />
+        <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 17 }}>{APP_NAME}</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,.14)", padding: "5px 10px", borderRadius: 999 }}>
+          <CircleDot size={13} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{me.name}</span>
+          {pending > 0 && (
+            <span style={{ background: "var(--amber)", color: "#fff", fontSize: 10.5, fontWeight: 700, borderRadius: 999, padding: "1px 6px" }}>{pending}</span>
+          )}
+        </div>
+        <button className="btn btn-ghost" style={{ color: "#fff", borderColor: "transparent" }} onClick={onSwitch}>
+          <LogOut size={14} /> 전환
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== NAV TABS ============================== */
+function NavTabs({ tab, setTab, pending }) {
+  const items = [
+    { id: "my", label: "내 근무표", icon: CalendarDays },
+    { id: "all", label: "전체 근무표", icon: Users },
+    { id: "swap", label: "근무 교환", icon: ArrowLeftRight, badge: pending },
+  ];
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {items.map((it) => (
+        <button key={it.id} className={`nav-btn ${tab === it.id ? "active" : ""}`} onClick={() => setTab(it.id)}>
+          <it.icon size={15} />
+          {it.label}
+          {!!it.badge && (
+            <span style={{ background: "var(--amber)", color: "#fff", fontSize: 10.5, fontWeight: 700, borderRadius: 999, padding: "1px 6px" }}>{it.badge}</span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ============================== WEEK SWITCHER ============================== */
+function WeekSwitcher({ weeks, weekIdx, setWeekIdx }) {
+  const w = weeks[weekIdx];
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+      <button className="btn btn-ghost" disabled={weekIdx === 0} onClick={() => setWeekIdx((i) => Math.max(0, i - 1))}>
+        <ChevronLeft size={16} />
+      </button>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 16 }}>{w?.label}</div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-soft)" }}>{w?.range}</div>
+      </div>
+      <button className="btn btn-ghost" disabled={weekIdx >= weeks.length - 1} onClick={() => setWeekIdx((i) => Math.min(weeks.length - 1, i + 1))}>
+        <ChevronRight size={16} />
+      </button>
+    </div>
+  );
+}
+
+/* ============================== MY SCHEDULE ============================== */
+function MyScheduleView({ me, shifts, weeks, weekIdx, setWeekIdx }) {
+  const week = weeks[weekIdx];
+  return (
+    <div>
+      <WeekSwitcher weeks={weeks} weekIdx={weekIdx} setWeekIdx={setWeekIdx} />
+      <div style={{ display: "grid", gap: 8 }}>
+        {week?.dates.map((date) => {
+          const shift = shifts.find((s) => s.date === date && s.empId === me.id) || null;
+          const dow = shift ? shift.dow : "";
+          const weekend = isWeekend(dow);
+          return (
+            <div key={date} className="card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: weekend ? "var(--surface-2)" : "var(--surface)" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--ink-soft)" }}>{date.slice(5)}</span>
+                <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 15, color: weekend ? "var(--clay)" : "var(--ink)" }}>{dow || "-"}</span>
+              </div>
+              <ShiftChip shift={shift} />
+            </div>
+          );
+        })}
+      </div>
+      <Legend />
+    </div>
+  );
+}
+
+/* ============================== ALL SCHEDULE (matrix) ============================== */
+function AllScheduleView({ employees, shifts, weeks, weekIdx, setWeekIdx, nextWeekPlan, onGenerate }) {
+  const week = weeks[weekIdx];
+  const [q, setQ] = useState("");
+  const filtered = employees.filter((e) => e.name.includes(q.trim()));
+  const isLastWeek = weekIdx === weeks.length - 1;
+
+  return (
+    <div>
+      <WeekSwitcher weeks={weeks} weekIdx={weekIdx} setWeekIdx={setWeekIdx} />
+      {isLastWeek && <AutoGeneratePanel plan={nextWeekPlan} onGenerate={onGenerate} />}
+      <div style={{ position: "relative", marginBottom: 10, maxWidth: 260 }}>
+        <Search size={14} style={{ position: "absolute", left: 10, top: 11, color: "var(--ink-soft)" }} />
+        <input type="text" placeholder="직원 검색" value={q} onChange={(e) => setQ(e.target.value)} style={{ paddingLeft: 30 }} />
+      </div>
+      <div className="card" style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+          <thead>
+            <tr>
+              <th style={thStyle("left")}>직원</th>
+              {week?.dates.map((d) => {
+                const dow = shifts.find((s) => s.date === d)?.dow || "";
+                return (
+                  <th key={d} style={{ ...thStyle("center"), color: isWeekend(dow) ? "var(--clay)" : "var(--ink-soft)" }}>
+                    <div style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{d.slice(5)}</div>
+                    <div style={{ fontFamily: "var(--font-display)", fontWeight: 600 }}>{dow}</div>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((emp, i) => (
+              <tr key={emp.id} style={{ background: i % 2 ? "var(--surface-2)" : "transparent" }}>
+                <td style={{ ...tdStyle, fontWeight: 600, whiteSpace: "nowrap", position: "sticky", left: 0, background: i % 2 ? "var(--surface-2)" : "var(--surface)" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 7, height: 7, borderRadius: 999, background: hueFor(emp.id), display: "inline-block" }} />
+                    {emp.name}
+                    {emp.active === false && (
+                      <span style={{ fontSize: 10, color: "var(--ink-soft)", fontWeight: 500, border: "1px solid var(--line)", borderRadius: 4, padding: "0 4px" }}>퇴사</span>
+                    )}
+                  </span>
+                </td>
+                {week?.dates.map((d) => {
+                  const shift = shifts.find((s) => s.date === d && s.empId === emp.id) || null;
+                  return (
+                    <td key={d} style={{ ...tdStyle, textAlign: "center" }}>
+                      <ShiftChip shift={shift} compact />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Legend />
+    </div>
+  );
+}
+const thStyle = (align) => ({ textAlign: align, padding: "8px 10px", borderBottom: "1.5px solid var(--line)", fontWeight: 600, color: "var(--ink-soft)", fontSize: 11.5 });
+const tdStyle = { padding: "7px 10px", borderBottom: "1px solid var(--line)" };
+
+/* ============================== AUTO-GENERATE PANEL ============================== */
+function AutoGeneratePanel({ plan, onGenerate }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  if (!plan) return null;
+  const rangeLabel = `${plan.weekDates[0].slice(5)} ~ ${plan.weekDates[6].slice(5)}`;
+
+  const handleClick = async () => {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setBusy(true);
+    await onGenerate();
+    setBusy(false);
+    setConfirming(false);
+  };
+
+  return (
+    <div className="card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 14px", marginBottom: 12, flexWrap: "wrap", background: "linear-gradient(0deg, var(--surface), #F8F4E6)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <Sparkles size={16} color="var(--amber)" />
+        <div>
+          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{rangeLabel} 근무표가 아직 없어요</div>
+          <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>자리 순환 규칙대로 자동 생성할 수 있어요 (A조·B조 각 그룹 안에서 한 칸씩 이동)</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {confirming && (
+          <button className="btn btn-ghost" onClick={() => setConfirming(false)} disabled={busy}>취소</button>
+        )}
+        <button className="btn btn-primary" onClick={handleClick} disabled={busy}>
+          <RefreshCw size={14} className={busy ? "animate-spin" : ""} />
+          {confirming ? "정말 생성할까요?" : "다음 주 자동 생성"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== LEGEND ============================== */
+function Legend() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="card" style={{ marginTop: 14, padding: "10px 14px" }}>
+      <button className="btn btn-ghost" style={{ padding: 0 }} onClick={() => setOpen((o) => !o)}>
+        <Info size={14} /> 근무 코드 안내 <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+      </button>
+      {open && (
+        <div style={{ marginTop: 10, fontSize: 12.5, color: "var(--ink-soft)", display: "grid", gap: 6 }}>
+          <div><ShiftChip shift={{ code: "1C", period: "주간", label: "주간1C" }} compact /> 1C · 3A · 3B <span style={{ fontFamily: "var(--font-mono)" }}>주간 05:00–15:00</span></div>
+          <div><ShiftChip shift={{ code: "1C", period: "야간", label: "야간1C" }} compact /> 1C · 3A <span style={{ fontFamily: "var(--font-mono)" }}>야간 15:00–01:00</span> · 3B <span style={{ fontFamily: "var(--font-mono)" }}>야간 15:00–20:00</span></div>
+          <div><ShiftChip shift={{ code: "N", period: "주간", label: "주간N" }} compact /> N · N1 <span style={{ fontFamily: "var(--font-mono)" }}>06:00–18:00</span> — 평일 주간 전용, 토·일요일은 배정하지 않아요.</div>
+          <div style={{ color: "var(--ink-soft)" }}>표시가 없는 코드는 회사 근무 규정을 따라요.</div>
+          <div style={{ color: "var(--ink-soft)" }}>근무 자리는 매주 A조·B조 그룹 안에서 한 칸씩 자동으로 순환돼요.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================== SWAP VIEW ============================== */
+function SwapView({ me, employees, shifts, weeks, requests, labelFor, onSubmit, onRespond, onCancel }) {
+  const [sub, setSub] = useState("new");
+  const incoming = requests.filter((r) => r.targetId === me.id);
+  const outgoing = requests.filter((r) => r.requesterId === me.id);
+  const incomingPending = incoming.filter((r) => r.status === "대기").length;
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        <SubTab id="new" sub={sub} setSub={setSub} icon={ArrowLeftRight} label="새 요청" />
+        <SubTab id="received" sub={sub} setSub={setSub} icon={Inbox} label="받은 요청" badge={incomingPending} />
+        <SubTab id="sent" sub={sub} setSub={setSub} icon={Send} label="보낸 요청" />
+      </div>
+      {sub === "new" && <NewSwapForm me={me} employees={employees} shifts={shifts} weeks={weeks} onSubmit={onSubmit} />}
+      {sub === "received" && <RequestList list={incoming} viewer="target" labelFor={labelFor} onRespond={onRespond} />}
+      {sub === "sent" && <RequestList list={outgoing} viewer="requester" labelFor={labelFor} onCancel={onCancel} />}
+    </div>
+  );
+}
+
+function SubTab({ id, sub, setSub, icon: Icon, label, badge }) {
+  return (
+    <button className={`nav-btn ${sub === id ? "active" : ""}`} onClick={() => setSub(id)}>
+      <Icon size={14} /> {label}
+      {!!badge && <span style={{ background: "var(--amber)", color: "#fff", fontSize: 10, fontWeight: 700, borderRadius: 999, padding: "1px 6px" }}>{badge}</span>}
+    </button>
+  );
+}
+
+function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
+  const [weekIdx, setWeekIdx] = useState(0);
+  const week = weeks[weekIdx];
+  const myShiftsInWeek = (week?.dates || []).map((d) => shifts.find((s) => s.date === d && s.empId === me.id)).filter(Boolean);
+
+  const [myDate, setMyDate] = useState("");
+  const [targetId, setTargetId] = useState("");
+  const [targetDate, setTargetDate] = useState("");
+  const [memo, setMemo] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const targetEmp = employees.find((e) => String(e.id) === String(targetId));
+  const targetWeekShifts = (week?.dates || []).map((d) => shifts.find((s) => s.date === d && targetEmp && s.empId === targetEmp.id)).filter(Boolean);
+
+  const myShift = shifts.find((s) => s.date === myDate && s.empId === me.id) || null;
+  const targetShift = shifts.find((s) => s.date === targetDate && targetEmp && s.empId === targetEmp.id) || null;
+
+  const canSubmit = myShift && targetEmp && targetShift && targetEmp.id !== me.id && !submitting;
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    await onSubmit({ myShift, targetEmp, targetShift, memo });
+    setSubmitting(false);
+    setMyDate("");
+    setTargetId("");
+    setTargetDate("");
+    setMemo("");
+  };
+
+  return (
+    <div className="card" style={{ padding: 16, display: "grid", gap: 14, maxWidth: 560 }}>
+      <WeekSwitcher weeks={weeks} weekIdx={weekIdx} setWeekIdx={setWeekIdx} />
+
+      <Field label="1. 내가 내놓을 근무">
+        <select value={myDate} onChange={(e) => setMyDate(e.target.value)}>
+          <option value="">날짜 선택</option>
+          {myShiftsInWeek.map((s) => (
+            <option key={s.date} value={s.date}>{s.date.slice(5)} ({s.dow}) · {s.label}</option>
+          ))}
+        </select>
+        {myShiftsInWeek.length === 0 && <Hint>이 주에 배정된 근무가 없어요.</Hint>}
+      </Field>
+
+      <Field label="2. 교환 상대">
+        <select value={targetId} onChange={(e) => { setTargetId(e.target.value); setTargetDate(""); }}>
+          <option value="">직원 선택</option>
+          {employees.filter((e) => e.id !== me.id && e.active !== false).map((e) => (
+            <option key={e.id} value={e.id}>{e.name}</option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="3. 받고 싶은 상대의 근무">
+        <select value={targetDate} onChange={(e) => setTargetDate(e.target.value)} disabled={!targetEmp}>
+          <option value="">날짜 선택</option>
+          {targetWeekShifts.map((s) => (
+            <option key={s.date} value={s.date}>{s.date.slice(5)} ({s.dow}) · {s.label}</option>
+          ))}
+        </select>
+        {targetEmp && targetWeekShifts.length === 0 && <Hint>{targetEmp.name}님은 이 주에 배정된 근무가 없어요.</Hint>}
+      </Field>
+
+      <Field label="메모 (선택)">
+        <textarea rows={2} placeholder="교환 사유를 남겨주세요" value={memo} onChange={(e) => setMemo(e.target.value)} />
+      </Field>
+
+      {myShift && targetShift && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "10px 0" }}>
+          <ShiftChip shift={myShift} />
+          <ArrowLeftRight size={15} color="var(--ink-soft)" />
+          <ShiftChip shift={targetShift} />
+        </div>
+      )}
+
+      <button className="btn btn-primary" disabled={!canSubmit} onClick={handleSubmit} style={{ justifyContent: "center" }}>
+        <Send size={14} /> {submitting ? "보내는 중…" : "교환 요청 보내기"}
+      </button>
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label style={{ display: "grid", gap: 6 }}>
+      <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink-soft)" }}>{label}</span>
+      {children}
+    </label>
+  );
+}
+function Hint({ children }) {
+  return <span style={{ fontSize: 12, color: "var(--amber)" }}>{children}</span>;
+}
+
+function RequestList({ list, viewer, labelFor, onRespond, onCancel }) {
+  const sorted = [...list].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  if (sorted.length === 0) {
+    return (
+      <div className="card" style={{ padding: 28, textAlign: "center", color: "var(--ink-soft)" }}>
+        <Inbox size={22} style={{ marginBottom: 8, opacity: 0.5 }} />
+        <div style={{ fontSize: 13.5 }}>{viewer === "target" ? "받은 요청이 없어요." : "보낸 요청이 없어요."}</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      {sorted.map((r) => (
+        <div key={r.id} className="card" style={{ padding: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 13.5 }}>
+              <span style={{ fontWeight: 700 }}>{r.requesterName}</span>
+              <span style={{ color: "var(--ink-soft)" }}> → </span>
+              <span style={{ fontWeight: 700 }}>{r.targetName}</span>
+            </div>
+            <StatusStamp status={r.status} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <MiniShift date={r.myDate} dow={r.myDow} code={r.myCode} period={r.myPeriod} owner={r.requesterName} labelFor={labelFor} />
+            <ArrowLeftRight size={14} color="var(--ink-soft)" />
+            <MiniShift date={r.targetDate} dow={r.targetDow} code={r.targetCode} period={r.targetPeriod} owner={r.targetName} labelFor={labelFor} />
+          </div>
+          {r.memo && <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 8 }}>"{r.memo}"</p>}
+          {viewer === "target" && r.status === "대기" && (
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <button className="btn btn-primary" onClick={() => onRespond(r.id, true)}><Check size={14} /> 수락</button>
+              <button className="btn btn-danger" onClick={() => onRespond(r.id, false)}><X size={14} /> 거절</button>
+            </div>
+          )}
+          {viewer === "requester" && r.status === "대기" && (
+            <div style={{ marginTop: 10 }}>
+              <button className="btn btn-ghost" onClick={() => onCancel(r.id)}><RotateCcw size={13} /> 요청 취소</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MiniShift({ date, dow, code, period, owner, labelFor }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span style={{ fontSize: 11, color: "var(--ink-soft)" }}>{owner}</span>
+      <ShiftChip shift={{ code, period, label: labelFor(code, period) }} />
+      <span style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--ink-soft)" }}>{date?.slice(5)} ({dow})</span>
+    </div>
+  );
+}
+
+function StatusStamp({ status }) {
+  const map = {
+    "대기": { cls: "stamp-wait", icon: Clock3, text: "대기중" },
+    "완료": { cls: "stamp-ok", icon: Check, text: "교환완료" },
+    "거절": { cls: "stamp-no", icon: X, text: "거절됨" },
+    "취소": { cls: "stamp-no", icon: RotateCcw, text: "취소됨" },
+  };
+  const m = map[status] || map["대기"];
+  return (
+    <span className={`stamp ${m.cls}`}>
+      <m.icon size={11} /> {m.text}
+    </span>
+  );
+}

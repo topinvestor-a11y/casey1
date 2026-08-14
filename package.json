@@ -1,0 +1,26 @@
+{
+  "name": "wt-app",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:full": "concurrently -k \"npm run build && wrangler dev\" \"vite\"",
+    "build": "vite build",
+    "preview": "vite preview",
+    "db:migrate:local": "wrangler d1 execute wt-app-db --local --file=./migrations/0001_init.sql",
+    "db:migrate:remote": "wrangler d1 execute wt-app-db --remote --file=./migrations/0001_init.sql",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "lucide-react": "^0.383.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^8.2.2",
+    "vite": "^5.4.0",
+    "wrangler": "^4.0.0"
+  }
+}
