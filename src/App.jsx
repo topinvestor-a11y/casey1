@@ -479,7 +479,7 @@ function MyScheduleView({ me, shifts, weeks, weekIdx, setWeekIdx }) {
       <div style={{ display: "grid", gap: 8 }}>
         {week?.dates.map((date) => {
           const shift = shifts.find((s) => s.date === date && s.empId === me.id) || null;
-          const dow = shift ? shift.dow : "";
+          const dow = shift ? shift.dow : dowForDate(date, shifts);
           const weekend = isWeekend(dow);
           return (
             <div key={date} className="card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: weekend ? "var(--surface-2)" : "var(--surface)" }}>
