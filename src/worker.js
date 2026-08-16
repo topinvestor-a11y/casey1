@@ -37,7 +37,7 @@ export default {
       }
 
       if (pathname === "/api/shifts/generate-next-week" && method === "POST") {
-        return await handleGenerateNextWeek(env);
+        return await handleGenerateNextWeek(request, env);
       }
 
       if (pathname === "/api/admin/replace-employee" && method === "POST") {
