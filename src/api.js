@@ -42,3 +42,11 @@ export function cancelRequest(id) {
 export function generateNextWeek() {
   return fetch("/api/shifts/generate-next-week", { method: "POST" }).then(handle);
 }
+
+export function replaceEmployee(payload) {
+  return fetch("/api/admin/replace-employee", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then(handle);
+}
