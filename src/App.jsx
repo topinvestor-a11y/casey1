@@ -608,7 +608,6 @@ function AutoGeneratePanel({ plan, onGenerate }) {
         <Sparkles size={16} color="var(--amber)" />
         <div>
           <div style={{ fontSize: 13.5, fontWeight: 600 }}>{rangeLabel} 근무표가 아직 없어요</div>
-          <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>자리 순환 규칙대로 자동 생성할 수 있어요 (A조·B조 각 그룹 안에서 한 칸씩 이동)</div>
           {error && <div style={{ fontSize: 12, color: "var(--clay)", marginTop: 4 }}>{error}</div>}
         </div>
       </div>
