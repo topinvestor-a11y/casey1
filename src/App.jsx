@@ -221,16 +221,16 @@ export default function App() {
 
   const nextWeekPlan = useMemo(() => planNextWeek(shifts), [shifts]);
 
-  const handleGenerateNextWeek = useCallback(async () => {
-    try {
-      const res = await generateNextWeek();
+  const handleGenerateNextWeek = useCallback(
+    async (pin) => {
+      const res = await generateNextWeek(pin);
       await load({ silent: true });
       setWeekIdx((i) => i + 1);
       notify(`${res.weekStart.slice(5)} 주 근무표를 자동 생성했어요.`);
-    } catch (e) {
-      notify(e.message || "생성에 실패했어요.", "warn");
-    }
-  }, [load, notify]);
+      return res;
+    },
+    [load, notify]
+  );
 
   const submitRequest = useCallback(
     async ({ myShift, targetEmp, targetShift, memo }) => {
@@ -570,21 +570,36 @@ const tdStyle = { padding: "7px 10px", borderBottom: "1px solid var(--line)" };
 
 /* ============================== AUTO-GENERATE PANEL ============================== */
 function AutoGeneratePanel({ plan, onGenerate }) {
+  const [pin, setPin] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   if (!plan) return null;
   const rangeLabel = `${plan.weekDates[0].slice(5)} ~ ${plan.weekDates[6].slice(5)}`;
 
   const handleClick = async () => {
+    if (pin.trim().length === 0) {
+      setError("비밀번호를 입력해주세요.");
+      return;
+    }
     if (!confirming) {
       setConfirming(true);
+      setError("");
       return;
     }
     setBusy(true);
-    await onGenerate();
-    setBusy(false);
-    setConfirming(false);
+    setError("");
+    try {
+      await onGenerate(pin);
+      setPin("");
+      setConfirming(false);
+    } catch (e) {
+      setError(e.message || "생성하지 못했어요.");
+      setConfirming(false);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -594,9 +609,17 @@ function AutoGeneratePanel({ plan, onGenerate }) {
         <div>
           <div style={{ fontSize: 13.5, fontWeight: 600 }}>{rangeLabel} 근무표가 아직 없어요</div>
           <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>자리 순환 규칙대로 자동 생성할 수 있어요 (A조·B조 각 그룹 안에서 한 칸씩 이동)</div>
+          {error && <div style={{ fontSize: 12, color: "var(--clay)", marginTop: 4 }}>{error}</div>}
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input
+          type="text"
+          placeholder="관리자 비밀번호"
+          value={pin}
+          onChange={(e) => { setPin(e.target.value); setConfirming(false); }}
+          style={{ width: 130 }}
+        />
         {confirming && (
           <button className="btn btn-ghost" onClick={() => setConfirming(false)} disabled={busy}>취소</button>
         )}
