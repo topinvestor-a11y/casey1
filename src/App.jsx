@@ -3,8 +3,9 @@ import {
   Sprout, Sun, Moon, ArrowLeftRight, Check, X, ChevronLeft, ChevronRight,
   Users, CalendarDays, Send, Inbox, Info, Search, RotateCcw, Clock3,
   ChevronDown, Leaf, Home, CircleDot, Sparkles, RefreshCw, AlertTriangle,
+  ShieldCheck, UserMinus, UserPlus, Lock,
 } from "lucide-react";
-import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek } from "./api";
+import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek, replaceEmployee } from "./api";
 
 const APP_NAME = "우리 근무표";
 const TAG_HUES = ["#3E6B49", "#46527D", "#C68A3D", "#8A5A6B", "#3E7A78", "#7A6B3E", "#5B5B8A"];
@@ -277,6 +278,16 @@ export default function App() {
     [load, notify]
   );
 
+  const handleReplaceEmployee = useCallback(
+    async ({ pin, retiringEmpId, newEmployeeName }) => {
+      const res = await replaceEmployee({ pin, retiringEmpId, newEmployeeName });
+      await load({ silent: true });
+      notify(`${res.retired.name}님 자리를 ${res.hired.name}님이 이어받았어요.`);
+      return res;
+    },
+    [load, notify]
+  );
+
   if (!ready) {
     return (
       <div className="wt-root" style={{ minHeight: 420, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -342,6 +353,9 @@ export default function App() {
               onRespond={respond}
               onCancel={cancel}
             />
+          )}
+          {tab === "admin" && (
+            <AdminView employees={employees} onReplace={handleReplaceEmployee} />
           )}
         </div>
       </div>
@@ -413,6 +427,7 @@ function NavTabs({ tab, setTab, pending }) {
     { id: "my", label: "내 근무표", icon: CalendarDays },
     { id: "all", label: "전체 근무표", icon: Users },
     { id: "swap", label: "근무 교환", icon: ArrowLeftRight, badge: pending },
+    { id: "admin", label: "관리", icon: ShieldCheck },
   ];
   return (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -791,5 +806,140 @@ function StatusStamp({ status }) {
     <span className={`stamp ${m.cls}`}>
       <m.icon size={11} /> {m.text}
     </span>
+  );
+}
+
+/* ============================== ADMIN VIEW ============================== */
+function AdminView({ employees, onReplace }) {
+  const [pin, setPin] = useState("");
+  const [unlocked, setUnlocked] = useState(false);
+  const [pinError, setPinError] = useState("");
+
+  const activeEmployees = sortBySeat(employees.filter((e) => e.active !== false));
+
+  const [retiringId, setRetiringId] = useState("");
+  const [newName, setNewName] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [lastResult, setLastResult] = useState(null);
+
+  const retiring = employees.find((e) => String(e.id) === String(retiringId));
+  const canSubmit = retiring && newName.trim().length > 0 && !submitting;
+
+  const handleUnlock = () => {
+    if (pin.trim().length === 0) return;
+    setUnlocked(true);
+    setPinError("");
+  };
+
+  const handleSubmit = async () => {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setSubmitting(true);
+    setFormError("");
+    try {
+      const res = await onReplace({ pin, retiringEmpId: retiring.id, newEmployeeName: newName.trim() });
+      setLastResult(res);
+      setRetiringId("");
+      setNewName("");
+      setConfirming(false);
+    } catch (e) {
+      if (e.status === 403) {
+        setUnlocked(false);
+        setPinError("비밀번호가 올바르지 않아요. 다시 입력해주세요.");
+      } else {
+        setFormError(e.message || "처리하지 못했어요.");
+      }
+      setConfirming(false);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!unlocked) {
+    return (
+      <div className="card" style={{ padding: 24, maxWidth: 420, margin: "0 auto", textAlign: "center" }}>
+        <Lock size={22} color="var(--ink-soft)" style={{ marginBottom: 10 }} />
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>관리자 비밀번호</div>
+        <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 0, marginBottom: 14 }}>
+          퇴사·입사 자리 교체는 근무표에 영향을 주는 작업이라 비밀번호가 필요해요.
+        </p>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            type="text"
+            placeholder="비밀번호"
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleUnlock()}
+          />
+          <button className="btn btn-primary" onClick={handleUnlock}>확인</button>
+        </div>
+        {pinError && <p style={{ color: "var(--clay)", fontSize: 12.5, marginTop: 10 }}>{pinError}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card" style={{ padding: 20, maxWidth: 480, margin: "0 auto", display: "grid", gap: 16 }}>
+      <div>
+        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>자리 교체 (퇴사 → 입사)</div>
+        <p style={{ fontSize: 12.5, color: "var(--ink-soft)", margin: 0 }}>
+          퇴사하는 직원의 순환 자리를 새로 입사하는 직원이 그대로 이어받아요. 지난 근무 기록은 그대로 남고,
+          다음 자동 생성부터 새 직원 이름으로 반영돼요.
+        </p>
+      </div>
+
+      <Field label="1. 퇴사하는 직원">
+        <select value={retiringId} onChange={(e) => { setRetiringId(e.target.value); setConfirming(false); }}>
+          <option value="">직원 선택</option>
+          {activeEmployees.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.name} ({e.group === "A" ? "A조" : "B조"} {e.seat}번)
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="2. 새로 입사하는 직원 이름">
+        <input
+          type="text"
+          placeholder="이름 입력"
+          value={newName}
+          onChange={(e) => { setNewName(e.target.value); setConfirming(false); }}
+        />
+      </Field>
+
+      {retiring && newName.trim() && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "6px 0", fontSize: 13.5 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--clay)" }}>
+            <UserMinus size={14} /> {retiring.name}
+          </span>
+          <ArrowLeftRight size={14} color="var(--ink-soft)" />
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--forest-dark)" }}>
+            <UserPlus size={14} /> {newName.trim()}
+          </span>
+        </div>
+      )}
+
+      {formError && <p style={{ color: "var(--clay)", fontSize: 12.5, margin: 0 }}>{formError}</p>}
+
+      <div style={{ display: "flex", gap: 8 }}>
+        {confirming && (
+          <button className="btn btn-ghost" onClick={() => setConfirming(false)} disabled={submitting}>취소</button>
+        )}
+        <button className="btn btn-primary" disabled={!canSubmit} onClick={handleSubmit} style={{ flex: 1, justifyContent: "center" }}>
+          {submitting ? "처리 중…" : confirming ? "정말 진행할까요? 다시 클릭" : "자리 교체하기"}
+        </button>
+      </div>
+
+      {lastResult && (
+        <div className="card" style={{ padding: 10, fontSize: 12.5, color: "var(--ink-soft)", background: "var(--surface-2)" }}>
+          {lastResult.retired.name}님 → {lastResult.hired.name}님으로 교체 완료 ({lastResult.hired.group === "A" ? "A조" : "B조"} {lastResult.hired.seat}번)
+        </div>
+      )}
+    </div>
   );
 }
