@@ -40,6 +40,13 @@ function isWeekend(dow) {
   return dow === "토" || dow === "일";
 }
 
+// Look up the weekday label for a date from any employee's shift that day
+// (every employee shares the same weekday for a given date).
+function dowForDate(date, shifts) {
+  const found = shifts.find((s) => s.date === date);
+  return found ? found.dow : "";
+}
+
 // A조(1~19번) → B조(20~35번) 순서로, 각 그룹 안에서는 자리 번호 순서로.
 // 자리 정보가 없는 직원(퇴사 등)은 맨 뒤로.
 function seatSortKey(e) {
@@ -657,17 +664,26 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
   const [submitting, setSubmitting] = useState(false);
 
   const targetEmp = employees.find((e) => String(e.id) === String(targetId));
-  const targetWeekShifts = (week?.dates || []).map((d) => shifts.find((s) => s.date === d && targetEmp && s.empId === targetEmp.id)).filter(Boolean);
+
+  // Every date in the week is selectable for the target — either their
+  // actual shift, or (if they have none) their day off.
+  const targetWeekOptions = (week?.dates || []).map((d) => {
+    const shift = targetEmp ? shifts.find((s) => s.date === d && s.empId === targetEmp.id) : null;
+    const dow = shift ? shift.dow : dowForDate(d, shifts);
+    return { date: d, dow, shift };
+  });
 
   const myShift = shifts.find((s) => s.date === myDate && s.empId === me.id) || null;
-  const targetShift = shifts.find((s) => s.date === targetDate && targetEmp && s.empId === targetEmp.id) || null;
+  const targetShift = targetEmp ? shifts.find((s) => s.date === targetDate && s.empId === targetEmp.id) || null : null;
+  const targetDow = targetWeekOptions.find((o) => o.date === targetDate)?.dow || "";
 
-  const canSubmit = myShift && targetEmp && targetShift && targetEmp.id !== me.id && !submitting;
+  const canSubmit = myShift && targetEmp && targetDate && targetEmp.id !== me.id && !submitting;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
-    await onSubmit({ myShift, targetEmp, targetShift, memo });
+    const targetPayload = targetShift || { date: targetDate, dow: targetDow, code: null, period: null };
+    await onSubmit({ myShift, targetEmp, targetShift: targetPayload, memo });
     setSubmitting(false);
     setMyDate("");
     setTargetId("");
@@ -698,21 +714,22 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
         </select>
       </Field>
 
-      <Field label="3. 받고 싶은 상대의 근무">
+      <Field label="3. 받고 싶은 상대의 근무 (비번 포함)">
         <select value={targetDate} onChange={(e) => setTargetDate(e.target.value)} disabled={!targetEmp}>
           <option value="">날짜 선택</option>
-          {targetWeekShifts.map((s) => (
-            <option key={s.date} value={s.date}>{s.date.slice(5)} ({s.dow}) · {s.label}</option>
+          {targetWeekOptions.map((o) => (
+            <option key={o.date} value={o.date}>
+              {o.date.slice(5)} ({o.dow}) · {o.shift ? o.shift.label : "비번"}
+            </option>
           ))}
         </select>
-        {targetEmp && targetWeekShifts.length === 0 && <Hint>{targetEmp.name}님은 이 주에 배정된 근무가 없어요.</Hint>}
       </Field>
 
       <Field label="메모 (선택)">
         <textarea rows={2} placeholder="교환 사유를 남겨주세요" value={memo} onChange={(e) => setMemo(e.target.value)} />
       </Field>
 
-      {myShift && targetShift && (
+      {myShift && targetDate && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "10px 0" }}>
           <ShiftChip shift={myShift} />
           <ArrowLeftRight size={15} color="var(--ink-soft)" />
@@ -788,7 +805,7 @@ function MiniShift({ date, dow, code, period, owner, labelFor }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <span style={{ fontSize: 11, color: "var(--ink-soft)" }}>{owner}</span>
-      <ShiftChip shift={{ code, period, label: labelFor(code, period) }} />
+      <ShiftChip shift={code ? { code, period, label: labelFor(code, period) } : null} />
       <span style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--ink-soft)" }}>{date?.slice(5)} ({dow})</span>
     </div>
   );
