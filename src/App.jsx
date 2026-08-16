@@ -413,13 +413,21 @@ function TopBar({ me, onSwitch, pending }) {
         <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 17 }}>{APP_NAME}</span>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,.14)", padding: "5px 10px", borderRadius: 999 }}>
+        <button
+          className="btn btn-ghost"
+          onClick={onSwitch}
+          style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: "rgba(255,255,255,.14)", borderColor: "transparent",
+            color: "#fff", padding: "5px 10px", borderRadius: 999,
+          }}
+        >
           <CircleDot size={13} />
           <span style={{ fontSize: 13, fontWeight: 600 }}>{me.name}</span>
           {pending > 0 && (
             <span style={{ background: "var(--amber)", color: "#fff", fontSize: 10.5, fontWeight: 700, borderRadius: 999, padding: "1px 6px" }}>{pending}</span>
           )}
-        </div>
+        </button>
         <button className="btn btn-ghost" style={{ color: "#fff", borderColor: "transparent" }} onClick={onSwitch}>
           <Home size={14} /> 홈
         </button>
