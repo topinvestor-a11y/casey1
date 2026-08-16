@@ -1,7 +1,7 @@
 export async function handleBootstrap(env) {
   const db = env.DB;
 
-  const [employees, codeRows, shifts, requests] = await Promise.all([
+  const [employees, codeRows, shifts, requests, anchorRows] = await Promise.all([
     db.prepare("SELECT id, name, active FROM employees ORDER BY id").all(),
     db.prepare("SELECT code, day_label, night_label FROM code_table").all(),
     db
@@ -19,6 +19,7 @@ export async function handleBootstrap(env) {
          FROM swap_requests ORDER BY created_at DESC`
       )
       .all(),
+    db.prepare("SELECT emp_id, seat, grp FROM anchor_week").all(),
   ]);
 
   const codeTable = {};
@@ -26,8 +27,18 @@ export async function handleBootstrap(env) {
     codeTable[r.code] = { dayLabel: r.day_label, nightLabel: r.night_label };
   }
 
+  const anchorByEmp = {};
+  for (const r of anchorRows.results) {
+    anchorByEmp[r.emp_id] = { seat: r.seat, group: r.grp };
+  }
+
   return Response.json({
-    employees: employees.results.map((e) => ({ ...e, active: !!e.active })),
+    employees: employees.results.map((e) => ({
+      ...e,
+      active: !!e.active,
+      seat: anchorByEmp[e.id] ? anchorByEmp[e.id].seat : null,
+      group: anchorByEmp[e.id] ? anchorByEmp[e.id].group : null,
+    })),
     codeTable,
     shifts: shifts.results.map((s) => ({ ...s, swappable: !!s.swappable })),
     requests: requests.results,
