@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Sprout, Sun, Moon, ArrowLeftRight, Check, X, ChevronLeft, ChevronRight,
   Users, CalendarDays, Send, Inbox, Info, Search, RotateCcw, Clock3,
-  ChevronDown, Leaf, LogOut, CircleDot, Sparkles, RefreshCw, AlertTriangle,
+  ChevronDown, Leaf, Home, CircleDot, Sparkles, RefreshCw, AlertTriangle,
 } from "lucide-react";
 import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek } from "./api";
 
@@ -37,6 +37,21 @@ function buildWeeks(shifts) {
 
 function isWeekend(dow) {
   return dow === "토" || dow === "일";
+}
+
+// A조(1~19번) → B조(20~35번) 순서로, 각 그룹 안에서는 자리 번호 순서로.
+// 자리 정보가 없는 직원(퇴사 등)은 맨 뒤로.
+function seatSortKey(e) {
+  if (e.group === "A") return [0, e.seat];
+  if (e.group === "B") return [1, e.seat];
+  return [2, e.id];
+}
+function sortBySeat(list) {
+  return [...list].sort((a, b) => {
+    const ka = seatSortKey(a);
+    const kb = seatSortKey(b);
+    return ka[0] !== kb[0] ? ka[0] - kb[0] : ka[1] - kb[1];
+  });
 }
 
 function dateAdd(dateStr, days) {
@@ -119,10 +134,11 @@ function ShiftChip({ shift, compact }) {
   if (!shift) return <span className="chip chip-empty">비번</span>;
   const isNight = shift.period === "야간";
   const hrs = hoursFor(shift.code, shift.period);
+  const prefix = isNight ? "야" : "주";
   return (
     <span className={`chip ${isNight ? "chip-night" : "chip-day"}`} title={hrs ? `${shift.label} · ${hrs}` : shift.label}>
       {isNight ? <Moon size={11} /> : <Sun size={11} />}
-      <span className="chip-code">{shift.code}</span>
+      <span className="chip-code">{prefix}{shift.code}</span>
       {!compact && hrs && <span className="chip-hrs">{hrs}</span>}
     </span>
   );
@@ -336,7 +352,7 @@ export default function App() {
 
 /* ============================== NAME GATE ============================== */
 function NameGate({ employees, search, setSearch, onChoose }) {
-  const filtered = employees.filter((e) => e.active !== false && e.name.includes(search.trim()));
+  const filtered = sortBySeat(employees.filter((e) => e.active !== false && e.name.includes(search.trim())));
   return (
     <div style={{ maxWidth: 720, margin: "0 auto" }}>
       <div style={{ textAlign: "center", marginBottom: 22 }}>
@@ -384,7 +400,7 @@ function TopBar({ me, onSwitch, pending }) {
           )}
         </div>
         <button className="btn btn-ghost" style={{ color: "#fff", borderColor: "transparent" }} onClick={onSwitch}>
-          <LogOut size={14} /> 전환
+          <Home size={14} /> 홈
         </button>
       </div>
     </div>
@@ -463,7 +479,7 @@ function MyScheduleView({ me, shifts, weeks, weekIdx, setWeekIdx }) {
 function AllScheduleView({ employees, shifts, weeks, weekIdx, setWeekIdx, nextWeekPlan, onGenerate }) {
   const week = weeks[weekIdx];
   const [q, setQ] = useState("");
-  const filtered = employees.filter((e) => e.name.includes(q.trim()));
+  const filtered = sortBySeat(employees.filter((e) => e.name.includes(q.trim())));
   const isLastWeek = weekIdx === weeks.length - 1;
 
   return (
@@ -661,7 +677,7 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
       <Field label="2. 교환 상대">
         <select value={targetId} onChange={(e) => { setTargetId(e.target.value); setTargetDate(""); }}>
           <option value="">직원 선택</option>
-          {employees.filter((e) => e.id !== me.id && e.active !== false).map((e) => (
+          {sortBySeat(employees.filter((e) => e.id !== me.id && e.active !== false)).map((e) => (
             <option key={e.id} value={e.id}>{e.name}</option>
           ))}
         </select>
