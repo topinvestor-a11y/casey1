@@ -25,7 +25,20 @@ function advanceSeat(seat, steps, group) {
   return order[((idx + steps) % n + n) % n];
 }
 
-export async function handleGenerateNextWeek(env) {
+export async function handleGenerateNextWeek(request, env) {
+  if (!env.ADMIN_PIN) {
+    return Response.json({ error: "관리자 기능이 아직 설정되지 않았어요 (ADMIN_PIN 미설정)." }, { status: 500 });
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "잘못된 요청 형식이에요." }, { status: 400 });
+  }
+  if (!body.pin || body.pin !== env.ADMIN_PIN) {
+    return Response.json({ error: "비밀번호가 올바르지 않아요." }, { status: 403 });
+  }
+
   const db = env.DB;
 
   const lastRow = await db.prepare("SELECT MAX(date) as maxDate FROM shifts").first();
