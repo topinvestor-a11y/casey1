@@ -34,8 +34,11 @@ export async function handleCreateRequest(request, env) {
     memo,
   } = body || {};
 
-  if (!requesterId || !targetId || !myDate || !targetDate || !myCode) {
+  if (!requesterId || !targetId || !myDate || !targetDate) {
     return Response.json({ error: "필수 항목이 빠졌어요." }, { status: 400 });
+  }
+  if (!myCode && !targetCode) {
+    return Response.json({ error: "두 사람 다 비번이면 교환할 근무가 없어요." }, { status: 400 });
   }
   if (String(requesterId) === String(targetId)) {
     return Response.json({ error: "자기 자신과는 교환할 수 없어요." }, { status: 400 });
@@ -45,8 +48,14 @@ export async function handleCreateRequest(request, env) {
     .prepare("SELECT code, period FROM shifts WHERE date = ? AND emp_id = ?")
     .bind(myDate, requesterId)
     .first();
-  if (!myShift || myShift.code !== myCode) {
-    return Response.json({ error: "근무 정보가 변경되었어요. 새로고침 후 다시 시도해주세요." }, { status: 409 });
+  // myCode is omitted when the requester is offering their own day off
+  // (working someone else's shift on a day they'd otherwise be off).
+  if (myCode) {
+    if (!myShift || myShift.code !== myCode) {
+      return Response.json({ error: "근무 정보가 변경되었어요. 새로고침 후 다시 시도해주세요." }, { status: 409 });
+    }
+  } else if (myShift) {
+    return Response.json({ error: "그 사이 나에게 이미 근무가 생겼어요. 새로고침 후 다시 시도해주세요." }, { status: 409 });
   }
 
   const targetShift = await db
@@ -66,15 +75,17 @@ export async function handleCreateRequest(request, env) {
   // A swap would double-book either side if they already independently
   // have a shift on the date they'd be taking over.
   if (myDate !== targetDate) {
-    const targetOnMyDate = await db
-      .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ?")
-      .bind(myDate, targetId)
-      .first();
-    if (targetOnMyDate) {
-      return Response.json(
-        { error: "상대방이 그 날짜에 이미 다른 근무가 있어서 교환할 수 없어요." },
-        { status: 409 }
-      );
+    if (myCode) {
+      const targetOnMyDate = await db
+        .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ?")
+        .bind(myDate, targetId)
+        .first();
+      if (targetOnMyDate) {
+        return Response.json(
+          { error: "상대방이 그 날짜에 이미 다른 근무가 있어서 교환할 수 없어요." },
+          { status: 409 }
+        );
+      }
     }
     if (targetCode) {
       const requesterOnTargetDate = await db
@@ -103,7 +114,7 @@ export async function handleCreateRequest(request, env) {
     )
     .bind(
       id, createdAt, requesterId, requesterName, targetId, targetName,
-      myDate, myDow, myCode, myPeriod, targetDate, targetDow, targetCode ?? null, targetPeriod ?? null,
+      myDate, myDow, myCode ?? null, myPeriod ?? null, targetDate, targetDow, targetCode ?? null, targetPeriod ?? null,
       memo || ""
     )
     .run();
