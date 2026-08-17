@@ -688,7 +688,6 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
   const rangeLabel = visibleWeeks.length
     ? `${visibleWeeks[0].dates[0].slice(5)} ~ ${visibleWeeks[visibleWeeks.length - 1].dates[6].slice(5)}`
     : "";
-  const myShiftsInRange = visibleDates.map((d) => shifts.find((s) => s.date === d && s.empId === me.id)).filter(Boolean);
 
   const [myDate, setMyDate] = useState("");
   const [targetId, setTargetId] = useState("");
@@ -698,25 +697,33 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
 
   const targetEmp = employees.find((e) => String(e.id) === String(targetId));
 
-  // Every date in range is selectable for the target — either their
-  // actual shift, or (if they have none) their day off.
+  // Every date in range is selectable on both sides — either the actual
+  // shift, or (if there's none) that person's day off.
+  const myDateOptions = visibleDates.map((d) => {
+    const shift = shifts.find((s) => s.date === d && s.empId === me.id) || null;
+    const dow = shift ? shift.dow : dowForDate(d, shifts);
+    return { date: d, dow, shift };
+  });
   const targetDateOptions = visibleDates.map((d) => {
     const shift = targetEmp ? shifts.find((s) => s.date === d && s.empId === targetEmp.id) : null;
     const dow = shift ? shift.dow : dowForDate(d, shifts);
     return { date: d, dow, shift };
   });
 
-  const myShift = shifts.find((s) => s.date === myDate && s.empId === me.id) || null;
+  const myShift = myDateOptions.find((o) => o.date === myDate)?.shift || null;
+  const myDow = myDateOptions.find((o) => o.date === myDate)?.dow || "";
   const targetShift = targetEmp ? shifts.find((s) => s.date === targetDate && s.empId === targetEmp.id) || null : null;
   const targetDow = targetDateOptions.find((o) => o.date === targetDate)?.dow || "";
 
-  const canSubmit = myShift && targetEmp && targetDate && targetEmp.id !== me.id && !submitting;
+  // Both sides being a day off would trade nothing.
+  const canSubmit = myDate && targetEmp && targetDate && (myShift || targetShift) && targetEmp.id !== me.id && !submitting;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
+    const myPayload = myShift || { date: myDate, dow: myDow, code: null, period: null };
     const targetPayload = targetShift || { date: targetDate, dow: targetDow, code: null, period: null };
-    await onSubmit({ myShift, targetEmp, targetShift: targetPayload, memo });
+    await onSubmit({ myShift: myPayload, targetEmp, targetShift: targetPayload, memo });
     setSubmitting(false);
     setMyDate("");
     setTargetId("");
@@ -731,14 +738,15 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
         <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-soft)" }}>{rangeLabel}</div>
       </div>
 
-      <Field label="1. 내가 내놓을 근무">
+      <Field label="1. 내가 내놓을 근무 (비번 포함)">
         <select value={myDate} onChange={(e) => setMyDate(e.target.value)}>
           <option value="">날짜 선택</option>
-          {myShiftsInRange.map((s) => (
-            <option key={s.date} value={s.date}>{s.date.slice(5)} ({s.dow}) · {s.label}</option>
+          {myDateOptions.map((o) => (
+            <option key={o.date} value={o.date}>
+              {o.date.slice(5)} ({o.dow}) · {o.shift ? o.shift.label : "비번"}
+            </option>
           ))}
         </select>
-        {myShiftsInRange.length === 0 && <Hint>이 기간에 배정된 근무가 없어요.</Hint>}
       </Field>
 
       <Field label="2. 교환 상대">
@@ -765,7 +773,7 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
         <textarea rows={2} placeholder="교환 사유를 남겨주세요" value={memo} onChange={(e) => setMemo(e.target.value)} />
       </Field>
 
-      {myShift && targetDate && (
+      {myDate && targetDate && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "10px 0" }}>
           <ShiftChip shift={myShift} />
           <ArrowLeftRight size={15} color="var(--ink-soft)" />
