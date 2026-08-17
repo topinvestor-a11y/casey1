@@ -18,12 +18,27 @@ export async function handleRespond(id, request, env) {
   const processedAt = new Date().toISOString();
 
   if (accept) {
-    const a = await db
-      .prepare("SELECT id FROM shifts WHERE date = ? AND emp_id = ?")
-      .bind(req.my_date, req.requester_id)
-      .first();
-    if (!a) {
-      return Response.json({ error: "근무 기록을 찾을 수 없어 처리하지 못했어요." }, { status: 409 });
+    let a = null;
+    if (req.my_code) {
+      a = await db
+        .prepare("SELECT id FROM shifts WHERE date = ? AND emp_id = ?")
+        .bind(req.my_date, req.requester_id)
+        .first();
+      if (!a) {
+        return Response.json({ error: "근무 기록을 찾을 수 없어 처리하지 못했어요." }, { status: 409 });
+      }
+    } else {
+      // Day-off on the requester's side: confirm they still genuinely have no shift there.
+      const stillOff = await db
+        .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ?")
+        .bind(req.my_date, req.requester_id)
+        .first();
+      if (stillOff) {
+        return Response.json(
+          { error: "그 사이 나에게 다른 근무가 생겨서 처리하지 못했어요." },
+          { status: 409 }
+        );
+      }
     }
 
     let b = null;
@@ -49,16 +64,22 @@ export async function handleRespond(id, request, env) {
       }
     }
 
+    if (!a && !b) {
+      return Response.json({ error: "교환할 근무가 없어요." }, { status: 409 });
+    }
+
     if (req.my_date !== req.target_date) {
-      const targetOnMyDate = await db
-        .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ?")
-        .bind(req.my_date, req.target_id)
-        .first();
-      if (targetOnMyDate) {
-        return Response.json(
-          { error: "상대방이 그 사이 다른 날짜에 근무가 생겨서 처리하지 못했어요." },
-          { status: 409 }
-        );
+      if (a) {
+        const targetOnMyDate = await db
+          .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ?")
+          .bind(req.my_date, req.target_id)
+          .first();
+        if (targetOnMyDate) {
+          return Response.json(
+            { error: "상대방이 그 사이 다른 날짜에 근무가 생겨서 처리하지 못했어요." },
+            { status: 409 }
+          );
+        }
       }
       if (b) {
         const requesterOnTargetDate = await db
@@ -74,7 +95,7 @@ export async function handleRespond(id, request, env) {
       }
     }
 
-    if (b) {
+    if (a && b) {
       // Placeholder emp_id avoids a UNIQUE(date, emp_id) collision when both
       // shifts fall on the same date. Row `a` (was the requester's) becomes
       // the target's, and row `b` (was the target's) becomes the requester's.
@@ -84,12 +105,16 @@ export async function handleRespond(id, request, env) {
         db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.target_id, req.target_name, a.id),
         db.prepare("UPDATE swap_requests SET status = '완료', processed_at = ? WHERE id = ?").bind(processedAt, id),
       ]);
-    } else {
-      // Day-off swap: the target simply takes over row `a`. Nothing needs
-      // to be written for the requester on target_date — they're off,
-      // same as the target was.
+    } else if (a && !b) {
+      // Requester's day off on the other side: the target simply takes over row `a`.
       await db.batch([
         db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.target_id, req.target_name, a.id),
+        db.prepare("UPDATE swap_requests SET status = '완료', processed_at = ? WHERE id = ?").bind(processedAt, id),
+      ]);
+    } else {
+      // Target's day off: the requester takes over row `b`.
+      await db.batch([
+        db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.requester_id, req.requester_name, b.id),
         db.prepare("UPDATE swap_requests SET status = '완료', processed_at = ? WHERE id = ?").bind(processedAt, id),
       ]);
     }
