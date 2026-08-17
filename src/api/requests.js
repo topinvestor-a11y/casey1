@@ -2,6 +2,11 @@ function uid() {
   return crypto.randomUUID();
 }
 
+function formatDate(dateStr) {
+  const [, m, d] = dateStr.split("-");
+  return `${Number(m)}월 ${Number(d)}일`;
+}
+
 export async function handleListRequests(env) {
   const db = env.DB;
   const rows = await db
@@ -82,7 +87,7 @@ export async function handleCreateRequest(request, env) {
         .first();
       if (targetOnMyDate) {
         return Response.json(
-          { error: "상대방이 그 날짜에 이미 다른 근무가 있어서 교환할 수 없어요." },
+          { error: `상대방이 ${formatDate(myDate)}에 이미 다른 근무가 있어서 교환할 수 없어요.` },
           { status: 409 }
         );
       }
@@ -94,7 +99,7 @@ export async function handleCreateRequest(request, env) {
         .first();
       if (requesterOnTargetDate) {
         return Response.json(
-          { error: "내가 그 날짜에 이미 다른 근무가 있어서 교환할 수 없어요." },
+          { error: `내가 ${formatDate(targetDate)}에 이미 다른 근무가 있어서 교환할 수 없어요.` },
           { status: 409 }
         );
       }
