@@ -683,9 +683,12 @@ function SubTab({ id, sub, setSub, icon: Icon, label, badge }) {
 }
 
 function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
-  const [weekIdx, setWeekIdx] = useState(0);
-  const week = weeks[weekIdx];
-  const myShiftsInWeek = (week?.dates || []).map((d) => shifts.find((s) => s.date === d && s.empId === me.id)).filter(Boolean);
+  const visibleWeeks = weeks.slice(-3);
+  const visibleDates = visibleWeeks.flatMap((w) => w.dates);
+  const rangeLabel = visibleWeeks.length
+    ? `${visibleWeeks[0].dates[0].slice(5)} ~ ${visibleWeeks[visibleWeeks.length - 1].dates[6].slice(5)}`
+    : "";
+  const myShiftsInRange = visibleDates.map((d) => shifts.find((s) => s.date === d && s.empId === me.id)).filter(Boolean);
 
   const [myDate, setMyDate] = useState("");
   const [targetId, setTargetId] = useState("");
@@ -695,9 +698,9 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
 
   const targetEmp = employees.find((e) => String(e.id) === String(targetId));
 
-  // Every date in the week is selectable for the target — either their
+  // Every date in range is selectable for the target — either their
   // actual shift, or (if they have none) their day off.
-  const targetWeekOptions = (week?.dates || []).map((d) => {
+  const targetDateOptions = visibleDates.map((d) => {
     const shift = targetEmp ? shifts.find((s) => s.date === d && s.empId === targetEmp.id) : null;
     const dow = shift ? shift.dow : dowForDate(d, shifts);
     return { date: d, dow, shift };
@@ -705,7 +708,7 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
 
   const myShift = shifts.find((s) => s.date === myDate && s.empId === me.id) || null;
   const targetShift = targetEmp ? shifts.find((s) => s.date === targetDate && s.empId === targetEmp.id) || null : null;
-  const targetDow = targetWeekOptions.find((o) => o.date === targetDate)?.dow || "";
+  const targetDow = targetDateOptions.find((o) => o.date === targetDate)?.dow || "";
 
   const canSubmit = myShift && targetEmp && targetDate && targetEmp.id !== me.id && !submitting;
 
@@ -723,16 +726,19 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
 
   return (
     <div className="card" style={{ padding: 16, display: "grid", gap: 14, maxWidth: 560 }}>
-      <WeekSwitcher weeks={weeks} weekIdx={weekIdx} setWeekIdx={setWeekIdx} />
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 16 }}>날짜 선택 범위</div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-soft)" }}>{rangeLabel}</div>
+      </div>
 
       <Field label="1. 내가 내놓을 근무">
         <select value={myDate} onChange={(e) => setMyDate(e.target.value)}>
           <option value="">날짜 선택</option>
-          {myShiftsInWeek.map((s) => (
+          {myShiftsInRange.map((s) => (
             <option key={s.date} value={s.date}>{s.date.slice(5)} ({s.dow}) · {s.label}</option>
           ))}
         </select>
-        {myShiftsInWeek.length === 0 && <Hint>이 주에 배정된 근무가 없어요.</Hint>}
+        {myShiftsInRange.length === 0 && <Hint>이 기간에 배정된 근무가 없어요.</Hint>}
       </Field>
 
       <Field label="2. 교환 상대">
@@ -747,7 +753,7 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
       <Field label="3. 받고 싶은 상대의 근무 (비번 포함)">
         <select value={targetDate} onChange={(e) => setTargetDate(e.target.value)} disabled={!targetEmp}>
           <option value="">날짜 선택</option>
-          {targetWeekOptions.map((o) => (
+          {targetDateOptions.map((o) => (
             <option key={o.date} value={o.date}>
               {o.date.slice(5)} ({o.dow}) · {o.shift ? o.shift.label : "비번"}
             </option>
