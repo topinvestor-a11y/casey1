@@ -1,6 +1,11 @@
 export async function handleRespond(id, request, env) {
   const db = env.DB;
 
+  function formatDate(dateStr) {
+    const [, m, d] = dateStr.split("-");
+    return `${Number(m)}월 ${Number(d)}일`;
+  }
+
   let body;
   try {
     body = await request.json();
@@ -76,7 +81,7 @@ export async function handleRespond(id, request, env) {
           .first();
         if (targetOnMyDate) {
           return Response.json(
-            { error: "상대방이 그 사이 다른 날짜에 근무가 생겨서 처리하지 못했어요." },
+            { error: `상대방이 그 사이 ${formatDate(req.my_date)}에 다른 근무가 생겨서 처리하지 못했어요.` },
             { status: 409 }
           );
         }
@@ -88,7 +93,7 @@ export async function handleRespond(id, request, env) {
           .first();
         if (requesterOnTargetDate) {
           return Response.json(
-            { error: "그 사이 다른 날짜에 근무가 생겨서 처리하지 못했어요." },
+            { error: `그 사이 ${formatDate(req.target_date)}에 내 근무가 생겨서 처리하지 못했어요.` },
             { status: 409 }
           );
         }
