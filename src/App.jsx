@@ -173,7 +173,7 @@ export default function App() {
   const notify = useCallback((msg, tone = "ok") => {
     setToast({ msg, tone });
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 2600);
+    toastTimer.current = setTimeout(() => setToast(null), 10000);
   }, []);
 
   const load = useCallback(async (opts = {}) => {
