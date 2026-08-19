@@ -44,6 +44,18 @@ export async function handleRespond(id, request, env) {
   }
   const accept = !!body.accept;
 
+  // Accepting actually changes the real schedule, so it's admin-gated —
+  // same PIN as "다음 주 자동 생성". Rejecting doesn't touch shifts, so
+  // it's left open.
+  if (accept) {
+    if (!env.ADMIN_PIN) {
+      return Response.json({ error: "관리자 기능이 아직 설정되지 않았어요 (ADMIN_PIN 미설정)." }, { status: 500 });
+    }
+    if (!body.pin || body.pin !== env.ADMIN_PIN) {
+      return Response.json({ error: "비밀번호가 올바르지 않아요." }, { status: 403 });
+    }
+  }
+
   const req = await db.prepare("SELECT * FROM swap_requests WHERE id = ?").bind(id).first();
   if (!req) return Response.json({ error: "요청을 찾을 수 없어요." }, { status: 404 });
   if (req.status !== "대기") {
