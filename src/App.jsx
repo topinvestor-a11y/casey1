@@ -260,14 +260,11 @@ export default function App() {
   );
 
   const respond = useCallback(
-    async (reqId, accept) => {
-      try {
-        await respondToRequest(reqId, accept);
-        await load({ silent: true });
-        notify(accept ? "근무를 교환했어요." : "요청을 거절했어요.", accept ? "ok" : "warn");
-      } catch (e) {
-        notify(e.message || "처리하지 못했어요.", "warn");
-      }
+    async (reqId, accept, pin) => {
+      const res = await respondToRequest(reqId, accept, pin);
+      await load({ silent: true });
+      notify(accept ? "근무를 교환했어요." : "요청을 거절했어요.", accept ? "ok" : "warn");
+      return res;
     },
     [load, notify]
   );
@@ -829,10 +826,7 @@ function RequestList({ list, viewer, labelFor, onRespond, onCancel }) {
           </div>
           {r.memo && <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 8 }}>"{r.memo}"</p>}
           {viewer === "target" && r.status === "대기" && (
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              <button className="btn btn-primary" onClick={() => onRespond(r.id, true)}><Check size={14} /> 수락</button>
-              <button className="btn btn-danger" onClick={() => onRespond(r.id, false)}><X size={14} /> 거절</button>
-            </div>
+            <AcceptRejectControls request={r} onRespond={onRespond} />
           )}
           {viewer === "requester" && r.status === "대기" && (
             <div style={{ marginTop: 10 }}>
@@ -841,6 +835,58 @@ function RequestList({ list, viewer, labelFor, onRespond, onCancel }) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+function AcceptRejectControls({ request, onRespond }) {
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleAccept = async () => {
+    if (pin.trim().length === 0) {
+      setError("수락하려면 관리자 비밀번호가 필요해요.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await onRespond(request.id, true, pin);
+    } catch (e) {
+      setError(e.message || "처리하지 못했어요.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleReject = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await onRespond(request.id, false);
+    } catch (e) {
+      setError(e.message || "처리하지 못했어요.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <input
+          type="text"
+          placeholder="관리자 비밀번호 (수락 시 필요)"
+          value={pin}
+          onChange={(e) => { setPin(e.target.value); setError(""); }}
+          style={{ maxWidth: 200 }}
+          disabled={busy}
+        />
+        <button className="btn btn-primary" onClick={handleAccept} disabled={busy}><Check size={14} /> 수락</button>
+        <button className="btn btn-danger" onClick={handleReject} disabled={busy}><X size={14} /> 거절</button>
+      </div>
+      {error && <p style={{ color: "var(--clay)", fontSize: 12, marginTop: 6 }}>{error}</p>}
     </div>
   );
 }
