@@ -359,7 +359,7 @@ export default function App() {
             />
           )}
           {tab === "admin" && (
-            <AdminView employees={employees} onReplace={handleReplaceEmployee} />
+            <AdminView employees={employees} requests={requests} labelFor={labelFor} onReplace={handleReplaceEmployee} onRespond={respond} />
           )}
         </div>
       </div>
@@ -917,12 +917,13 @@ function StatusStamp({ status }) {
 }
 
 /* ============================== ADMIN VIEW ============================== */
-function AdminView({ employees, onReplace }) {
+function AdminView({ employees, requests, labelFor, onReplace, onRespond }) {
   const [pin, setPin] = useState("");
   const [unlocked, setUnlocked] = useState(false);
   const [pinError, setPinError] = useState("");
 
   const activeEmployees = sortBySeat(employees.filter((e) => e.active !== false));
+  const pendingRequests = requests.filter((r) => r.status === "대기").sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
   const [retiringId, setRetiringId] = useState("");
   const [newName, setNewName] = useState("");
@@ -972,7 +973,7 @@ function AdminView({ employees, onReplace }) {
         <Lock size={22} color="var(--ink-soft)" style={{ marginBottom: 10 }} />
         <div style={{ fontWeight: 600, marginBottom: 4 }}>관리자 비밀번호</div>
         <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 0, marginBottom: 14 }}>
-          퇴사·입사 자리 교체는 근무표에 영향을 주는 작업이라 비밀번호가 필요해요.
+          교환 요청 승인, 퇴사·입사 자리 교체는 근무표에 영향을 주는 작업이라 비밀번호가 필요해요.
         </p>
         <div style={{ display: "flex", gap: 8 }}>
           <input
@@ -990,7 +991,10 @@ function AdminView({ employees, onReplace }) {
   }
 
   return (
-    <div className="card" style={{ padding: 20, maxWidth: 480, margin: "0 auto", display: "grid", gap: 16 }}>
+    <div style={{ display: "grid", gap: 20, maxWidth: 560, margin: "0 auto" }}>
+      <PendingRequestsQueue requests={pendingRequests} labelFor={labelFor} pin={pin} onRespond={onRespond} />
+
+      <div className="card" style={{ padding: 20, display: "grid", gap: 16 }}>
       <div>
         <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>자리 교체 (퇴사 → 입사)</div>
         <p style={{ fontSize: 12.5, color: "var(--ink-soft)", margin: 0 }}>
@@ -1047,6 +1051,67 @@ function AdminView({ employees, onReplace }) {
           {lastResult.retired.name}님 → {lastResult.hired.name}님으로 교체 완료 ({lastResult.hired.group === "A" ? "A조" : "B조"} {lastResult.hired.seat}번)
         </div>
       )}
+      </div>
+    </div>
+  );
+}
+
+function PendingRequestsQueue({ requests, labelFor, pin, onRespond }) {
+  const [busyId, setBusyId] = useState(null);
+  const [errorById, setErrorById] = useState({});
+
+  const handle = async (reqId, accept) => {
+    setBusyId(reqId);
+    setErrorById((prev) => ({ ...prev, [reqId]: "" }));
+    try {
+      await onRespond(reqId, accept, accept ? pin : undefined);
+    } catch (e) {
+      setErrorById((prev) => ({ ...prev, [reqId]: e.message || "처리하지 못했어요." }));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: 20, display: "grid", gap: 14 }}>
+      <div>
+        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>대기 중인 교환 요청 ({requests.length})</div>
+        <p style={{ fontSize: 12.5, color: "var(--ink-soft)", margin: 0 }}>
+          직원 이름을 하나씩 눌러보지 않아도, 여기서 전체 요청을 한 번에 확인하고 처리할 수 있어요.
+        </p>
+      </div>
+
+      {requests.length === 0 && (
+        <div style={{ padding: "16px 0", textAlign: "center", color: "var(--ink-soft)", fontSize: 13 }}>
+          <Inbox size={20} style={{ marginBottom: 6, opacity: 0.5 }} />
+          <div>대기 중인 요청이 없어요.</div>
+        </div>
+      )}
+
+      {requests.map((r) => (
+        <div key={r.id} className="card" style={{ padding: 14, background: "var(--surface-2)" }}>
+          <div style={{ fontSize: 13.5 }}>
+            <span style={{ fontWeight: 700 }}>{r.requesterName}</span>
+            <span style={{ color: "var(--ink-soft)" }}> → </span>
+            <span style={{ fontWeight: 700 }}>{r.targetName}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <MiniShift date={r.myDate} dow={r.myDow} code={r.myCode} period={r.myPeriod} owner={r.requesterName} labelFor={labelFor} />
+            <ArrowLeftRight size={14} color="var(--ink-soft)" />
+            <MiniShift date={r.targetDate} dow={r.targetDow} code={r.targetCode} period={r.targetPeriod} owner={r.targetName} labelFor={labelFor} />
+          </div>
+          {r.memo && <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 8 }}>"{r.memo}"</p>}
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button className="btn btn-primary" onClick={() => handle(r.id, true)} disabled={busyId === r.id}>
+              <Check size={14} /> 수락
+            </button>
+            <button className="btn btn-danger" onClick={() => handle(r.id, false)} disabled={busyId === r.id}>
+              <X size={14} /> 거절
+            </button>
+          </div>
+          {errorById[r.id] && <p style={{ color: "var(--clay)", fontSize: 12, marginTop: 6 }}>{errorById[r.id]}</p>}
+        </div>
+      ))}
     </div>
   );
 }
