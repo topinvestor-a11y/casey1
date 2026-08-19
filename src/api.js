@@ -27,11 +27,11 @@ export function createRequest(payload) {
   }).then(handle);
 }
 
-export function respondToRequest(id, accept) {
+export function respondToRequest(id, accept, pin) {
   return fetch(`/api/requests/${id}/respond`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accept }),
+    body: JSON.stringify({ accept, pin }),
   }).then(handle);
 }
 
