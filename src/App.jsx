@@ -5,7 +5,7 @@ import {
   ChevronDown, Leaf, Home, CircleDot, Sparkles, RefreshCw, AlertTriangle,
   ShieldCheck, UserMinus, UserPlus, Lock,
 } from "lucide-react";
-import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek, replaceEmployee, setShift } from "./api";
+import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek, replaceEmployee, setShift, fetchShiftLog } from "./api";
 
 const APP_NAME = "우리 근무표";
 const TAG_HUES = ["#3E6B49", "#46527D", "#C68A3D", "#8A5A6B", "#3E7A78", "#7A6B3E", "#5B5B8A"];
@@ -933,6 +933,28 @@ function AdminView({ employees, requests, codeTable, labelFor, onReplace, onResp
   const activeEmployees = sortBySeat(employees.filter((e) => e.active !== false));
   const pendingRequests = requests.filter((r) => r.status === "대기").sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
+  const [shiftLog, setShiftLog] = useState([]);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logError, setLogError] = useState("");
+
+  const loadLog = useCallback(async (currentPin) => {
+    setLogLoading(true);
+    setLogError("");
+    try {
+      const rows = await fetchShiftLog(currentPin);
+      setShiftLog(rows);
+    } catch (e) {
+      setLogError(e.message || "이력을 불러오지 못했어요.");
+    } finally {
+      setLogLoading(false);
+    }
+  }, []);
+
+  const refreshAll = useCallback(async () => {
+    await onRefresh();
+    await loadLog(pin);
+  }, [onRefresh, loadLog, pin]);
+
   const [retiringId, setRetiringId] = useState("");
   const [newName, setNewName] = useState("");
   const [confirming, setConfirming] = useState(false);
@@ -947,6 +969,7 @@ function AdminView({ employees, requests, codeTable, labelFor, onReplace, onResp
     if (pin.trim().length === 0) return;
     setUnlocked(true);
     setPinError("");
+    loadLog(pin);
   };
 
   const handleSubmit = async () => {
@@ -1067,8 +1090,57 @@ function AdminView({ employees, requests, codeTable, labelFor, onReplace, onResp
         labelFor={labelFor}
         pin={pin}
         onSetShift={onSetShift}
-        onRefresh={onRefresh}
+        onRefresh={refreshAll}
       />
+
+      <ShiftEditLog log={shiftLog} loading={logLoading} error={logError} onRefresh={() => loadLog(pin)} />
+    </div>
+  );
+}
+
+function ShiftEditLog({ log, loading, error, onRefresh }) {
+  return (
+    <div className="card" style={{ padding: 20, display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>근무 직접 수정 이력</div>
+          <p style={{ fontSize: 12.5, color: "var(--ink-soft)", margin: 0 }}>
+            휴가·비번·특정 코드 변경 기록이에요 (최근 순). 근무 교환은 여기 안 나와요.
+          </p>
+        </div>
+        <button className="btn btn-ghost" onClick={onRefresh} disabled={loading}>
+          <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> 새로고침
+        </button>
+      </div>
+
+      {error && <p style={{ color: "var(--clay)", fontSize: 12.5, margin: 0 }}>{error}</p>}
+
+      {!loading && log.length === 0 && !error && (
+        <div style={{ padding: "12px 0", textAlign: "center", color: "var(--ink-soft)", fontSize: 13 }}>
+          아직 수정 이력이 없어요.
+        </div>
+      )}
+
+      {log.length > 0 && (
+        <div style={{ display: "grid", gap: 8, maxHeight: 360, overflowY: "auto" }}>
+          {log.map((r) => (
+            <div key={r.id} className="card" style={{ padding: 10, background: "var(--surface-2)", fontSize: 12.5 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+                <span><strong>{r.empName}</strong> · {r.date?.slice(5)} ({r.dow})</span>
+                <span style={{ color: "var(--ink-soft)", fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                  {r.createdAt ? new Date(r.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+                <span style={{ color: "var(--ink-soft)" }}>{r.oldLabel || "비번"}</span>
+                <ArrowLeftRight size={12} color="var(--ink-soft)" />
+                <span style={{ fontWeight: 600 }}>{r.newLabel || "비번"}</span>
+              </div>
+              {r.reason && <div style={{ color: "var(--ink-soft)", marginTop: 4 }}>{r.reason}</div>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
