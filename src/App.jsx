@@ -5,7 +5,7 @@ import {
   ChevronDown, Leaf, Home, CircleDot, Sparkles, RefreshCw, AlertTriangle,
   ShieldCheck, UserMinus, UserPlus, Lock,
 } from "lucide-react";
-import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek, replaceEmployee } from "./api";
+import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek, replaceEmployee, setShift } from "./api";
 
 const APP_NAME = "우리 근무표";
 const TAG_HUES = ["#3E6B49", "#46527D", "#C68A3D", "#8A5A6B", "#3E7A78", "#7A6B3E", "#5B5B8A"];
@@ -292,6 +292,14 @@ export default function App() {
     [load, notify]
   );
 
+  const handleSetShift = useCallback(
+    async ({ pin, empId, date, code, period }) => {
+      const res = await setShift({ pin, empId, date, code, period });
+      return res;
+    },
+    []
+  );
+
   if (!ready) {
     return (
       <div className="wt-root" style={{ minHeight: 420, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -359,7 +367,7 @@ export default function App() {
             />
           )}
           {tab === "admin" && (
-            <AdminView employees={employees} requests={requests} labelFor={labelFor} onReplace={handleReplaceEmployee} onRespond={respond} />
+            <AdminView employees={employees} requests={requests} codeTable={codeTable} labelFor={labelFor} onReplace={handleReplaceEmployee} onRespond={respond} onSetShift={handleSetShift} onRefresh={() => load({ silent: true })} />
           )}
         </div>
       </div>
@@ -917,7 +925,7 @@ function StatusStamp({ status }) {
 }
 
 /* ============================== ADMIN VIEW ============================== */
-function AdminView({ employees, requests, labelFor, onReplace, onRespond }) {
+function AdminView({ employees, requests, codeTable, labelFor, onReplace, onRespond, onSetShift, onRefresh }) {
   const [pin, setPin] = useState("");
   const [unlocked, setUnlocked] = useState(false);
   const [pinError, setPinError] = useState("");
@@ -1052,9 +1060,163 @@ function AdminView({ employees, requests, labelFor, onReplace, onRespond }) {
         </div>
       )}
       </div>
+
+      <ManualShiftEditor
+        employees={employees}
+        codeTable={codeTable}
+        labelFor={labelFor}
+        pin={pin}
+        onSetShift={onSetShift}
+        onRefresh={onRefresh}
+      />
     </div>
   );
 }
+
+function ManualShiftEditor({ employees, codeTable, labelFor, pin, onSetShift, onRefresh }) {
+  const activeEmployees = sortBySeat(employees.filter((e) => e.active !== false));
+  const codeOptions = Object.keys(codeTable || {}).filter((c) => c !== "휴가").sort();
+
+  const [empId, setEmpId] = useState("");
+  const [mode, setMode] = useState("leave"); // leave | code | clear
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [code, setCode] = useState("");
+  const [period, setPeriod] = useState("주간");
+  const [confirming, setConfirming] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState("");
+
+  const selectedEmp = employees.find((e) => String(e.id) === String(empId));
+
+  function datesInRange(start, end) {
+    const out = [];
+    const [sy, sm, sd] = start.split("-").map(Number);
+    const [ey, em, ed] = end.split("-").map(Number);
+    let cur = new Date(Date.UTC(sy, sm - 1, sd));
+    const last = new Date(Date.UTC(ey, em - 1, ed));
+    while (cur <= last) {
+      out.push(cur.toISOString().slice(0, 10));
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return out;
+  }
+
+  const canSubmit = empId && startDate && (mode !== "code" || code) && !submitting;
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    const end = endDate || startDate;
+    const dates = datesInRange(startDate, end);
+    if (dates.length === 0 || dates.length > 60) {
+      setError("날짜 범위가 올바르지 않아요 (최대 60일).");
+      setConfirming(false);
+      return;
+    }
+
+    setSubmitting(true);
+    setError("");
+    setResult("");
+    let okCount = 0;
+    const failed = [];
+    for (const d of dates) {
+      try {
+        if (mode === "leave") {
+          await onSetShift({ pin, empId, date: d, code: "휴가", period: "주간" });
+        } else if (mode === "clear") {
+          await onSetShift({ pin, empId, date: d, code: null });
+        } else {
+          await onSetShift({ pin, empId, date: d, code, period });
+        }
+        okCount += 1;
+      } catch (e) {
+        failed.push(`${d.slice(5)} (${e.message || "실패"})`);
+      }
+    }
+    await onRefresh();
+    setSubmitting(false);
+    setConfirming(false);
+    if (failed.length === 0) {
+      setResult(`${selectedEmp?.name}님 ${okCount}일 처리 완료했어요.`);
+    } else {
+      setResult(`${okCount}일 성공, ${failed.length}일 실패: ${failed.join(", ")}`);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: 20, display: "grid", gap: 16 }}>
+      <div>
+        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>근무 직접 수정</div>
+        <p style={{ fontSize: 12.5, color: "var(--ink-soft)", margin: 0 }}>
+          휴가·장기 요양처럼 순환 규칙과 상관없이 근무를 직접 바꿔야 할 때 사용해요. 기간을 선택하면 그 기간 전체에 적용돼요.
+        </p>
+      </div>
+
+      <Field label="1. 대상 직원">
+        <select value={empId} onChange={(e) => { setEmpId(e.target.value); setConfirming(false); }}>
+          <option value="">직원 선택</option>
+          {activeEmployees.map((e) => (
+            <option key={e.id} value={e.id}>{e.name}</option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="2. 작업 종류">
+        <select value={mode} onChange={(e) => { setMode(e.target.value); setConfirming(false); }}>
+          <option value="leave">휴가로 설정</option>
+          <option value="code">특정 근무 코드로 설정</option>
+          <option value="clear">근무 없음(비번)으로 비우기</option>
+        </select>
+      </Field>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <Field label="3. 시작일">
+          <input type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setConfirming(false); }} />
+        </Field>
+        <Field label="종료일 (하루면 비워두세요)">
+          <input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setConfirming(false); }} />
+        </Field>
+      </div>
+
+      {mode === "code" && (
+        <div style={{ display: "flex", gap: 10 }}>
+          <Field label="근무 코드">
+            <select value={code} onChange={(e) => { setCode(e.target.value); setConfirming(false); }}>
+              <option value="">코드 선택</option>
+              {codeOptions.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="주간/야간">
+            <select value={period} onChange={(e) => { setPeriod(e.target.value); setConfirming(false); }}>
+              <option value="주간">주간</option>
+              <option value="야간">야간</option>
+            </select>
+          </Field>
+        </div>
+      )}
+
+      {error && <p style={{ color: "var(--clay)", fontSize: 12.5, margin: 0 }}>{error}</p>}
+      {result && <p style={{ color: "var(--forest-dark)", fontSize: 12.5, margin: 0 }}>{result}</p>}
+
+      <div style={{ display: "flex", gap: 8 }}>
+        {confirming && (
+          <button className="btn btn-ghost" onClick={() => setConfirming(false)} disabled={submitting}>취소</button>
+        )}
+        <button className="btn btn-primary" disabled={!canSubmit} onClick={handleSubmit} style={{ flex: 1, justifyContent: "center" }}>
+          {submitting ? "처리 중…" : confirming ? "정말 적용할까요? 다시 클릭" : "적용하기"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 
 function PendingRequestsQueue({ requests, labelFor, pin, onRespond }) {
   const [busyId, setBusyId] = useState(null);
