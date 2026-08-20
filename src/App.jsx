@@ -1124,15 +1124,18 @@ function ManualShiftEditor({ employees, codeTable, labelFor, pin, onSetShift, on
     setResult("");
     let okCount = 0;
     const failed = [];
+    const freedNames = new Set();
     for (const d of dates) {
       try {
+        let res;
         if (mode === "leave") {
-          await onSetShift({ pin, empId, date: d, code: "휴가", period: "주간" });
+          res = await onSetShift({ pin, empId, date: d, code: "휴가", period: "주간" });
         } else if (mode === "clear") {
-          await onSetShift({ pin, empId, date: d, code: null });
+          res = await onSetShift({ pin, empId, date: d, code: null });
         } else {
-          await onSetShift({ pin, empId, date: d, code, period });
+          res = await onSetShift({ pin, empId, date: d, code, period });
         }
+        (res?.freed || []).forEach((n) => freedNames.add(n));
         okCount += 1;
       } catch (e) {
         failed.push(`${d.slice(5)} (${e.message || "실패"})`);
@@ -1141,10 +1144,11 @@ function ManualShiftEditor({ employees, codeTable, labelFor, pin, onSetShift, on
     await onRefresh();
     setSubmitting(false);
     setConfirming(false);
+    const freedNote = freedNames.size > 0 ? ` (${[...freedNames].join(", ")}님은 해당 근무가 비번으로 바뀌었어요)` : "";
     if (failed.length === 0) {
-      setResult(`${selectedEmp?.name}님 ${okCount}일 처리 완료했어요.`);
+      setResult(`${selectedEmp?.name}님 ${okCount}일 처리 완료했어요.${freedNote}`);
     } else {
-      setResult(`${okCount}일 성공, ${failed.length}일 실패: ${failed.join(", ")}`);
+      setResult(`${okCount}일 성공, ${failed.length}일 실패: ${failed.join(", ")}${freedNote}`);
     }
   };
 
