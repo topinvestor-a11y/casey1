@@ -60,3 +60,79 @@ export async function handleReplaceEmployee(request, env) {
     hired: { id: newEmpId, name: newName, seat: anchor.seat, group: anchor.grp },
   });
 }
+
+// POST /api/admin/set-shift
+// body: { pin, empId, date, code, period }
+// code = null clears the shift (becomes 비번). code = '휴가' marks leave.
+// Otherwise code must be a real code_table entry. Upserts the shifts row —
+// used for manual corrections (vacation, extended leave, one-off edits).
+function dowForDateAdmin(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const names = ["일", "월", "화", "수", "목", "금", "토"];
+  return names[dt.getUTCDay()];
+}
+
+export async function handleSetShift(request, env) {
+  const db = env.DB;
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "잘못된 요청 형식이에요." }, { status: 400 });
+  }
+
+  const { pin, empId, date, code, period } = body || {};
+
+  if (!env.ADMIN_PIN) {
+    return Response.json({ error: "관리자 기능이 아직 설정되지 않았어요 (ADMIN_PIN 미설정)." }, { status: 500 });
+  }
+  if (!pin || pin !== env.ADMIN_PIN) {
+    return Response.json({ error: "비밀번호가 올바르지 않아요." }, { status: 403 });
+  }
+  if (!empId || !date) {
+    return Response.json({ error: "필수 항목이 빠졌어요." }, { status: 400 });
+  }
+
+  const emp = await db.prepare("SELECT id, name FROM employees WHERE id = ?").bind(empId).first();
+  if (!emp) {
+    return Response.json({ error: "해당 직원을 찾을 수 없어요." }, { status: 404 });
+  }
+
+  const dow = dowForDateAdmin(date);
+
+  if (!code) {
+    await db.prepare("DELETE FROM shifts WHERE date = ? AND emp_id = ?").bind(date, empId).run();
+    return Response.json({ empId: emp.id, name: emp.name, date, dow, code: null });
+  }
+
+  let label;
+  let finalPeriod = period || "주간";
+  let swappable = 1;
+
+  if (code === "휴가") {
+    label = "휴가";
+    finalPeriod = "주간";
+    swappable = 0;
+  } else {
+    const codeRow = await db.prepare("SELECT day_label, night_label FROM code_table WHERE code = ?").bind(code).first();
+    if (!codeRow) {
+      return Response.json({ error: "알 수 없는 근무 코드예요." }, { status: 400 });
+    }
+    label = finalPeriod === "야간" ? codeRow.night_label || codeRow.day_label : codeRow.day_label;
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO shifts (date, dow, emp_id, emp_name, period, code, label, swappable)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(date, emp_id) DO UPDATE SET
+         dow = excluded.dow, period = excluded.period, code = excluded.code,
+         label = excluded.label, swappable = excluded.swappable`
+    )
+    .bind(date, dow, empId, emp.name, finalPeriod, code, label, swappable)
+    .run();
+
+  return Response.json({ empId: emp.id, name: emp.name, date, dow, period: finalPeriod, code, label });
+}
