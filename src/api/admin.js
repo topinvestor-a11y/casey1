@@ -147,14 +147,14 @@ export async function handleSetShift(request, env) {
     }
   }
 
-  const result = await assignShift(db, empId, emp.name, date, code, period);
+  const result = await assignShift(db, empId, emp.name, date, code, period, "관리자 직접 수정");
   if (result.error) {
     return Response.json({ error: result.error }, { status: result.status });
   }
 
   let substituteResult = null;
   if (sub) {
-    const subResult = await assignShift(db, sub.id, sub.name, date, vacatedShift.code, vacatedShift.period);
+    const subResult = await assignShift(db, sub.id, sub.name, date, vacatedShift.code, vacatedShift.period, "휴가자 대체 근무 배정");
     if (subResult.error) {
       return Response.json({ error: `휴가는 처리됐지만, 대체 근무자 배정에 실패했어요: ${subResult.error}` }, { status: subResult.status });
     }
@@ -165,13 +165,35 @@ export async function handleSetShift(request, env) {
 }
 
 // Core upsert: applies the single-slot-per-code rule and the adjacent-day
-// rest check, then writes the row. Shared by the main assignment and the
-// substitute handoff above.
-async function assignShift(db, empId, empName, date, code, period) {
+// rest check, then writes the row. Every change is written to
+// shift_edit_log (before/after) so admins can review what happened later.
+async function assignShift(db, empId, empName, date, code, period, reason) {
   const dow = dowForDateAdmin(date);
+  const now = new Date().toISOString();
+
+  const before = await db
+    .prepare("SELECT code, period, label FROM shifts WHERE date = ? AND emp_id = ?")
+    .bind(date, empId)
+    .first();
+
+  async function log(newCode, newPeriod, newLabel, logReason) {
+    await db
+      .prepare(
+        `INSERT INTO shift_edit_log
+         (created_at, emp_id, emp_name, date, dow, old_code, old_period, old_label, new_code, new_period, new_label, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        now, empId, empName, date, dow,
+        before?.code ?? null, before?.period ?? null, before?.label ?? null,
+        newCode, newPeriod, newLabel, logReason
+      )
+      .run();
+  }
 
   if (!code) {
     await db.prepare("DELETE FROM shifts WHERE date = ? AND emp_id = ?").bind(date, empId).run();
+    await log(null, null, null, reason);
     return { empId, name: empName, date, dow, code: null };
   }
 
@@ -197,13 +219,24 @@ async function assignShift(db, empId, empName, date, code, period) {
   let freed = [];
   if (code !== "휴가") {
     const holders = await db
-      .prepare("SELECT emp_id, emp_name FROM shifts WHERE date = ? AND period = ? AND code = ? AND emp_id != ?")
+      .prepare("SELECT emp_id, emp_name, code, period, label FROM shifts WHERE date = ? AND period = ? AND code = ? AND emp_id != ?")
       .bind(date, finalPeriod, code, empId)
       .all();
     if (holders.results.length > 0) {
       await db.batch(
         holders.results.map((h) =>
           db.prepare("DELETE FROM shifts WHERE date = ? AND emp_id = ?").bind(date, h.emp_id)
+        )
+      );
+      await db.batch(
+        holders.results.map((h) =>
+          db
+            .prepare(
+              `INSERT INTO shift_edit_log
+               (created_at, emp_id, emp_name, date, dow, old_code, old_period, old_label, new_code, new_period, new_label, reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`
+            )
+            .bind(now, h.emp_id, h.emp_name, date, dow, h.code, h.period, h.label, `${empName}님이 같은 근무를 배정받아 비번 처리됨`)
         )
       );
       freed = holders.results.map((h) => h.emp_name);
@@ -249,5 +282,34 @@ async function assignShift(db, empId, empName, date, code, period) {
     .bind(date, dow, empId, empName, finalPeriod, code, label, swappable)
     .run();
 
+  await log(code, finalPeriod, label, reason);
+
   return { empId, name: empName, date, dow, period: finalPeriod, code, label, freed };
+}
+
+// GET /api/admin/shift-log?pin=...&limit=100
+export async function handleGetShiftLog(request, env) {
+  const db = env.DB;
+  const url = new URL(request.url);
+  const pin = url.searchParams.get("pin");
+  const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 300);
+
+  if (!env.ADMIN_PIN) {
+    return Response.json({ error: "관리자 기능이 아직 설정되지 않았어요 (ADMIN_PIN 미설정)." }, { status: 500 });
+  }
+  if (!pin || pin !== env.ADMIN_PIN) {
+    return Response.json({ error: "비밀번호가 올바르지 않아요." }, { status: 403 });
+  }
+
+  const rows = await db
+    .prepare(
+      `SELECT id, created_at as createdAt, emp_id as empId, emp_name as empName, date, dow,
+              old_code as oldCode, old_period as oldPeriod, old_label as oldLabel,
+              new_code as newCode, new_period as newPeriod, new_label as newLabel, reason
+       FROM shift_edit_log ORDER BY created_at DESC LIMIT ?`
+    )
+    .bind(limit)
+    .all();
+
+  return Response.json(rows.results);
 }
