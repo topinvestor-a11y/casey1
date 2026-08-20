@@ -2,7 +2,7 @@ import { handleBootstrap } from "./api/bootstrap.js";
 import { handleListRequests, handleCreateRequest } from "./api/requests.js";
 import { handleRespond, handleCancel } from "./api/requestActions.js";
 import { handleGenerateNextWeek } from "./api/generateNextWeek.js";
-import { handleReplaceEmployee } from "./api/admin.js";
+import { handleReplaceEmployee, handleSetShift } from "./api/admin.js";
 
 // Simple manual router. Cloudflare recommends this unified Worker +
 // static-assets shape for new projects in 2026 — one entry point that
@@ -42,6 +42,10 @@ export default {
 
       if (pathname === "/api/admin/replace-employee" && method === "POST") {
         return await handleReplaceEmployee(request, env);
+      }
+
+      if (pathname === "/api/admin/set-shift" && method === "POST") {
+        return await handleSetShift(request, env);
       }
 
       if (pathname.startsWith("/api/")) {
