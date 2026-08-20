@@ -126,17 +126,34 @@ export async function handleSetShift(request, env) {
       .first();
   }
 
+  // Check the substitute BEFORE touching anything: if they already have a
+  // different shift that day, handing them the vacated duty would just
+  // silently create a new coverage gap in their place. Block instead.
+  let sub = null;
+  if (code === "휴가" && body.substituteEmpId && vacatedShift) {
+    sub = await db.prepare("SELECT id, name FROM employees WHERE id = ?").bind(body.substituteEmpId).first();
+    if (!sub) {
+      return Response.json({ error: "대체 근무자를 찾을 수 없어요." }, { status: 404 });
+    }
+    const subExisting = await db
+      .prepare("SELECT code, label FROM shifts WHERE date = ? AND emp_id = ?")
+      .bind(date, sub.id)
+      .first();
+    if (subExisting) {
+      return Response.json(
+        { error: `${sub.name}님은 ${formatDateAdmin(date)}에 이미 다른 근무(${subExisting.label})가 있어서 대체 근무자로 지정할 수 없어요.` },
+        { status: 409 }
+      );
+    }
+  }
+
   const result = await assignShift(db, empId, emp.name, date, code, period);
   if (result.error) {
     return Response.json({ error: result.error }, { status: result.status });
   }
 
   let substituteResult = null;
-  if (code === "휴가" && body.substituteEmpId && vacatedShift) {
-    const sub = await db.prepare("SELECT id, name FROM employees WHERE id = ?").bind(body.substituteEmpId).first();
-    if (!sub) {
-      return Response.json({ error: "대체 근무자를 찾을 수 없어요." }, { status: 404 });
-    }
+  if (sub) {
     const subResult = await assignShift(db, sub.id, sub.name, date, vacatedShift.code, vacatedShift.period);
     if (subResult.error) {
       return Response.json({ error: `휴가는 처리됐지만, 대체 근무자 배정에 실패했어요: ${subResult.error}` }, { status: subResult.status });
