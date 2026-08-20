@@ -62,3 +62,7 @@ export function setShift(payload) {
     body: JSON.stringify(payload),
   }).then(handle);
 }
+
+export function fetchShiftLog(pin, limit = 100) {
+  return fetch(`/api/admin/shift-log?pin=${encodeURIComponent(pin)}&limit=${limit}`).then(handle);
+}
