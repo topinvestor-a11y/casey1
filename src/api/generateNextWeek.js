@@ -41,15 +41,30 @@ export async function handleGenerateNextWeek(request, env) {
 
   const db = env.DB;
 
-  const lastRow = await db.prepare("SELECT MAX(date) as maxDate FROM shifts").first();
+  // Only count a date as a real "generated day" if it has a substantial
+  // number of rows — a sparse manual entry (leave set far in advance for
+  // just one person) shouldn't be mistaken for an already-generated week.
+  const lastRow = await db
+    .prepare(
+      "SELECT MAX(date) as maxDate FROM (SELECT date, COUNT(*) as n FROM shifts GROUP BY date HAVING n > 5)"
+    )
+    .first();
   const lastDate = lastRow && lastRow.maxDate;
   if (!lastDate) {
     return Response.json({ error: "기준이 될 근무 데이터가 없어요." }, { status: 400 });
   }
 
-  const nextMonday = dateAdd(lastDate, 1);
-  const exists = await db.prepare("SELECT 1 FROM shifts WHERE date = ?").bind(nextMonday).first();
-  if (exists) {
+  // Round up to the next full Monday-start week boundary relative to the
+  // anchor, rather than just "lastDate + 1" — a sparse future date (e.g. a
+  // leave entry set far in advance) can otherwise push lastDate past the
+  // actual latest generated week and throw this off.
+  const weekOffsetOfLastDate = Math.floor(daysBetween(ANCHOR_MONDAY, lastDate) / 7);
+  const nextMonday = dateAdd(ANCHOR_MONDAY, (weekOffsetOfLastDate + 1) * 7);
+  const exists = await db.prepare("SELECT COUNT(*) as n FROM shifts WHERE date = ?").bind(nextMonday).first();
+  // A handful of rows can come from a manually-set entry (leave, edit) made
+  // in advance for that date — only a week that's actually been generated
+  // has a full day's worth of rows, so use a threshold rather than any row.
+  if (exists && exists.n > 5) {
     return Response.json({ error: `${nextMonday} 주는 이미 생성되어 있어요.`, alreadyExists: true }, { status: 409 });
   }
 
@@ -106,11 +121,21 @@ export async function handleGenerateNextWeek(request, env) {
   }
 
   const stmt = db.prepare(
-    "INSERT INTO shifts (date, dow, emp_id, emp_name, period, code, label, swappable) VALUES (?, ?, ?, ?, ?, ?, ?, 1)"
+    // OR IGNORE: a manually-set entry (e.g. leave scheduled in advance for
+    // this date) already occupying that (date, emp_id) slot wins over the
+    // auto-generated rotation code.
+    "INSERT OR IGNORE INTO shifts (date, dow, emp_id, emp_name, period, code, label, swappable) VALUES (?, ?, ?, ?, ?, ?, ?, 1)"
   );
-  await db.batch(
+  const results = await db.batch(
     rowsToInsert.map((r) => stmt.bind(r.date, r.dow, r.empId, r.empName, r.period, r.code, r.label))
   );
+  const actuallyInserted = results.reduce((sum, r) => sum + (r.meta?.changes || 0), 0);
+  const skipped = rowsToInsert.length - actuallyInserted;
 
-  return Response.json({ inserted: rowsToInsert.length, weekStart: nextMonday, weekEnd: weekDates[6] });
+  return Response.json({
+    inserted: actuallyInserted,
+    skipped,
+    weekStart: nextMonday,
+    weekEnd: weekDates[6],
+  });
 }
