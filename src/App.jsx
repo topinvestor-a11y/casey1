@@ -1079,6 +1079,7 @@ function ManualShiftEditor({ employees, codeTable, labelFor, pin, onSetShift, on
 
   const [empId, setEmpId] = useState("");
   const [mode, setMode] = useState("leave"); // leave | code | clear
+  const [substituteId, setSubstituteId] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [code, setCode] = useState("");
@@ -1125,11 +1126,18 @@ function ManualShiftEditor({ employees, codeTable, labelFor, pin, onSetShift, on
     let okCount = 0;
     const failed = [];
     const freedNames = new Set();
+    const substituteNotes = [];
     for (const d of dates) {
       try {
         let res;
         if (mode === "leave") {
-          res = await onSetShift({ pin, empId, date: d, code: "휴가", period: "주간" });
+          res = await onSetShift({
+            pin, empId, date: d, code: "휴가", period: "주간",
+            substituteEmpId: substituteId || undefined,
+          });
+          if (res?.substitute) {
+            substituteNotes.push(`${d.slice(5)} ${res.substitute.name}님이 ${res.substitute.label} 대신 근무`);
+          }
         } else if (mode === "clear") {
           res = await onSetShift({ pin, empId, date: d, code: null });
         } else {
@@ -1145,10 +1153,11 @@ function ManualShiftEditor({ employees, codeTable, labelFor, pin, onSetShift, on
     setSubmitting(false);
     setConfirming(false);
     const freedNote = freedNames.size > 0 ? ` (${[...freedNames].join(", ")}님은 해당 근무가 비번으로 바뀌었어요)` : "";
+    const subNote = substituteNotes.length > 0 ? ` / ${substituteNotes.join(", ")}` : "";
     if (failed.length === 0) {
-      setResult(`${selectedEmp?.name}님 ${okCount}일 처리 완료했어요.${freedNote}`);
+      setResult(`${selectedEmp?.name}님 ${okCount}일 처리 완료했어요.${freedNote}${subNote}`);
     } else {
-      setResult(`${okCount}일 성공, ${failed.length}일 실패: ${failed.join(", ")}${freedNote}`);
+      setResult(`${okCount}일 성공, ${failed.length}일 실패: ${failed.join(", ")}${freedNote}${subNote}`);
     }
   };
 
@@ -1177,6 +1186,17 @@ function ManualShiftEditor({ employees, codeTable, labelFor, pin, onSetShift, on
           <option value="clear">근무 없음(비번)으로 비우기</option>
         </select>
       </Field>
+
+      {mode === "leave" && (
+        <Field label="대체 근무자 (선택, 원래 근무를 이어받아요)">
+          <select value={substituteId} onChange={(e) => { setSubstituteId(e.target.value); setConfirming(false); }}>
+            <option value="">지정 안 함</option>
+            {sortBySeat(employees.filter((e) => e.active !== false && String(e.id) !== String(empId))).map((e) => (
+              <option key={e.id} value={e.id}>{e.name}</option>
+            ))}
+          </select>
+        </Field>
+      )}
 
       <div style={{ display: "flex", gap: 10 }}>
         <Field label="3. 시작일">
