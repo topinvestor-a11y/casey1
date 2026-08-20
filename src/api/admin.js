@@ -115,11 +115,47 @@ export async function handleSetShift(request, env) {
     return Response.json({ error: "해당 직원을 찾을 수 없어요." }, { status: 404 });
   }
 
+  // Leaving on 휴가 usually means someone else has to cover the duty this
+  // person would have had — capture it now, before it's overwritten, so it
+  // can be handed to a substitute below.
+  let vacatedShift = null;
+  if (code === "휴가") {
+    vacatedShift = await db
+      .prepare("SELECT code, period FROM shifts WHERE date = ? AND emp_id = ?")
+      .bind(date, empId)
+      .first();
+  }
+
+  const result = await assignShift(db, empId, emp.name, date, code, period);
+  if (result.error) {
+    return Response.json({ error: result.error }, { status: result.status });
+  }
+
+  let substituteResult = null;
+  if (code === "휴가" && body.substituteEmpId && vacatedShift) {
+    const sub = await db.prepare("SELECT id, name FROM employees WHERE id = ?").bind(body.substituteEmpId).first();
+    if (!sub) {
+      return Response.json({ error: "대체 근무자를 찾을 수 없어요." }, { status: 404 });
+    }
+    const subResult = await assignShift(db, sub.id, sub.name, date, vacatedShift.code, vacatedShift.period);
+    if (subResult.error) {
+      return Response.json({ error: `휴가는 처리됐지만, 대체 근무자 배정에 실패했어요: ${subResult.error}` }, { status: subResult.status });
+    }
+    substituteResult = { empId: sub.id, name: sub.name, code: vacatedShift.code, period: vacatedShift.period, label: subResult.label };
+  }
+
+  return Response.json({ ...result, substitute: substituteResult });
+}
+
+// Core upsert: applies the single-slot-per-code rule and the adjacent-day
+// rest check, then writes the row. Shared by the main assignment and the
+// substitute handoff above.
+async function assignShift(db, empId, empName, date, code, period) {
   const dow = dowForDateAdmin(date);
 
   if (!code) {
     await db.prepare("DELETE FROM shifts WHERE date = ? AND emp_id = ?").bind(date, empId).run();
-    return Response.json({ empId: emp.id, name: emp.name, date, dow, code: null });
+    return { empId, name: empName, date, dow, code: null };
   }
 
   let label;
@@ -133,7 +169,7 @@ export async function handleSetShift(request, env) {
   } else {
     const codeRow = await db.prepare("SELECT day_label, night_label FROM code_table WHERE code = ?").bind(code).first();
     if (!codeRow) {
-      return Response.json({ error: "알 수 없는 근무 코드예요." }, { status: 400 });
+      return { error: "알 수 없는 근무 코드예요.", status: 400 };
     }
     label = finalPeriod === "야간" ? codeRow.night_label || codeRow.day_label : codeRow.day_label;
   }
@@ -164,10 +200,10 @@ export async function handleSetShift(request, env) {
         .bind(nextDate, empId)
         .first();
       if (clash) {
-        return Response.json(
-          { error: `${emp.name}님이 ${formatDateAdmin(nextDate)}에 주간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 다른 코드를 선택해주세요.` },
-          { status: 409 }
-        );
+        return {
+          error: `${empName}님이 ${formatDateAdmin(nextDate)}에 주간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 다른 코드를 선택해주세요.`,
+          status: 409,
+        };
       }
     }
     if (finalPeriod === "주간") {
@@ -177,10 +213,10 @@ export async function handleSetShift(request, env) {
         .bind(prevDate, empId)
         .first();
       if (clash) {
-        return Response.json(
-          { error: `${emp.name}님이 ${formatDateAdmin(prevDate)}에 야간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 다른 코드를 선택해주세요.` },
-          { status: 409 }
-        );
+        return {
+          error: `${empName}님이 ${formatDateAdmin(prevDate)}에 야간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 다른 코드를 선택해주세요.`,
+          status: 409,
+        };
       }
     }
   }
@@ -193,8 +229,8 @@ export async function handleSetShift(request, env) {
          dow = excluded.dow, period = excluded.period, code = excluded.code,
          label = excluded.label, swappable = excluded.swappable`
     )
-    .bind(date, dow, empId, emp.name, finalPeriod, code, label, swappable)
+    .bind(date, dow, empId, empName, finalPeriod, code, label, swappable)
     .run();
 
-  return Response.json({ empId: emp.id, name: emp.name, date, dow, period: finalPeriod, code, label, freed });
+  return { empId, name: empName, date, dow, period: finalPeriod, code, label, freed };
 }
