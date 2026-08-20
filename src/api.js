@@ -54,3 +54,11 @@ export function replaceEmployee(payload) {
     body: JSON.stringify(payload),
   }).then(handle);
 }
+
+export function setShift(payload) {
+  return fetch("/api/admin/set-shift", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then(handle);
+}
