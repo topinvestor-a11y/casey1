@@ -73,6 +73,21 @@ function dowForDateAdmin(dateStr) {
   return names[dt.getUTCDay()];
 }
 
+function dateAddAdmin(dateStr, days) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+function formatDateAdmin(dateStr) {
+  const [, m, d] = dateStr.split("-");
+  return `${Number(m)}월 ${Number(d)}일`;
+}
+
 export async function handleSetShift(request, env) {
   const db = env.DB;
 
@@ -123,6 +138,53 @@ export async function handleSetShift(request, env) {
     label = finalPeriod === "야간" ? codeRow.night_label || codeRow.day_label : codeRow.day_label;
   }
 
+  // A real duty code is a single slot — only one person can hold a given
+  // (date, period, code) at a time. Vacation ("휴가") is a personal status,
+  // not a slot, so it's exempt.
+  let freed = [];
+  if (code !== "휴가") {
+    const holders = await db
+      .prepare("SELECT emp_id, emp_name FROM shifts WHERE date = ? AND period = ? AND code = ? AND emp_id != ?")
+      .bind(date, finalPeriod, code, empId)
+      .all();
+    if (holders.results.length > 0) {
+      await db.batch(
+        holders.results.map((h) =>
+          db.prepare("DELETE FROM shifts WHERE date = ? AND emp_id = ?").bind(date, h.emp_id)
+        )
+      );
+      freed = holders.results.map((h) => h.emp_name);
+    }
+
+    // Same night-then-day / day-after-night rest check used for swaps.
+    if (finalPeriod === "야간") {
+      const nextDate = dateAddAdmin(date, 1);
+      const clash = await db
+        .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ? AND period = '주간'")
+        .bind(nextDate, empId)
+        .first();
+      if (clash) {
+        return Response.json(
+          { error: `${emp.name}님이 ${formatDateAdmin(nextDate)}에 주간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 다른 코드를 선택해주세요.` },
+          { status: 409 }
+        );
+      }
+    }
+    if (finalPeriod === "주간") {
+      const prevDate = dateAddAdmin(date, -1);
+      const clash = await db
+        .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ? AND period = '야간'")
+        .bind(prevDate, empId)
+        .first();
+      if (clash) {
+        return Response.json(
+          { error: `${emp.name}님이 ${formatDateAdmin(prevDate)}에 야간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 다른 코드를 선택해주세요.` },
+          { status: 409 }
+        );
+      }
+    }
+  }
+
   await db
     .prepare(
       `INSERT INTO shifts (date, dow, emp_id, emp_name, period, code, label, swappable)
@@ -134,5 +196,5 @@ export async function handleSetShift(request, env) {
     .bind(date, dow, empId, emp.name, finalPeriod, code, label, swappable)
     .run();
 
-  return Response.json({ empId: emp.id, name: emp.name, date, dow, period: finalPeriod, code, label });
+  return Response.json({ empId: emp.id, name: emp.name, date, dow, period: finalPeriod, code, label, freed });
 }
