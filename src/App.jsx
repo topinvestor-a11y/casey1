@@ -47,17 +47,46 @@ function dowForDate(date, shifts) {
   return found ? found.dow : "";
 }
 
-// A조(1~19번) → B조(20~35번) 순서로, 각 그룹 안에서는 자리 번호 순서로.
-// 자리 정보가 없는 직원(퇴사 등)은 맨 뒤로.
-function seatSortKey(e) {
-  if (e.group === "A") return [0, e.seat];
-  if (e.group === "B") return [1, e.seat];
+// Same rotation rule the server uses (generateNextWeek.js / admin.js):
+// A조 = seats 1-7,9-19 (8 is permanently vacant), B조 = seats 20-35, each
+// group advances by one seat per week, wrapping at the end of its group.
+const ANCHOR_MONDAY = "2026-08-31";
+const GROUP_A_SEATS = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+const GROUP_B_SEATS = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35];
+
+function daysBetween(a, b) {
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000);
+}
+function advanceSeat(seat, steps, group) {
+  const order = group === "A" ? GROUP_A_SEATS : GROUP_B_SEATS;
+  const idx = order.indexOf(seat);
+  if (idx === -1) return seat;
+  const n = order.length;
+  return order[((idx + steps) % n + n) % n];
+}
+// `employees` carries each person's seat/group as of the anchor week —
+// this rotates that forward to whichever week (by its Monday date) is
+// actually being displayed, so the on-screen order tracks the real rotation.
+function rotatedSeat(e, weekMonday) {
+  if (e.seat == null || !e.group) return null;
+  if (!weekMonday) return e.seat;
+  const weekOffset = Math.round(daysBetween(ANCHOR_MONDAY, weekMonday) / 7);
+  return advanceSeat(e.seat, weekOffset, e.group);
+}
+
+// A조(1~19번) → B조(20~35번) 순서로, 각 그룹 안에서는 그 주의 회전된 자리
+// 번호 순서로. 자리 정보가 없는 직원(퇴사 등)은 맨 뒤로.
+function seatSortKey(e, weekMonday) {
+  if (e.group === "A") return [0, rotatedSeat(e, weekMonday)];
+  if (e.group === "B") return [1, rotatedSeat(e, weekMonday)];
   return [2, e.id];
 }
-function sortBySeat(list) {
+function sortBySeat(list, weekMonday) {
   return [...list].sort((a, b) => {
-    const ka = seatSortKey(a);
-    const kb = seatSortKey(b);
+    const ka = seatSortKey(a, weekMonday);
+    const kb = seatSortKey(b, weekMonday);
     return ka[0] !== kb[0] ? ka[0] - kb[0] : ka[1] - kb[1];
   });
 }
@@ -326,7 +355,7 @@ export default function App() {
   if (!me) {
     return (
       <div className="wt-root" style={{ minHeight: 480, padding: "28px 20px", borderRadius: 16 }}>
-        <NameGate employees={employees} search={search} setSearch={setSearch} onChoose={chooseMe} />
+        <NameGate employees={employees} weeks={weeks} search={search} setSearch={setSearch} onChoose={chooseMe} />
       </div>
     );
   }
@@ -367,7 +396,7 @@ export default function App() {
             />
           )}
           {tab === "admin" && (
-            <AdminView employees={employees} requests={requests} codeTable={codeTable} labelFor={labelFor} onReplace={handleReplaceEmployee} onRespond={respond} onSetShift={handleSetShift} onRefresh={() => load({ silent: true })} />
+            <AdminView employees={employees} requests={requests} codeTable={codeTable} weeks={weeks} labelFor={labelFor} onReplace={handleReplaceEmployee} onRespond={respond} onSetShift={handleSetShift} onRefresh={() => load({ silent: true })} />
           )}
         </div>
       </div>
@@ -377,8 +406,9 @@ export default function App() {
 }
 
 /* ============================== NAME GATE ============================== */
-function NameGate({ employees, search, setSearch, onChoose }) {
-  const filtered = sortBySeat(employees.filter((e) => e.active !== false && e.name.includes(search.trim())));
+function NameGate({ employees, weeks, search, setSearch, onChoose }) {
+  const latestMonday = weeks?.length ? weeks[weeks.length - 1].dates[0] : null;
+  const filtered = sortBySeat(employees.filter((e) => e.active !== false && e.name.includes(search.trim())), latestMonday);
   return (
     <div style={{ maxWidth: 720, margin: "0 auto" }}>
       <div style={{ textAlign: "center", marginBottom: 22 }}>
@@ -514,7 +544,7 @@ function MyScheduleView({ me, shifts, weeks, weekIdx, setWeekIdx }) {
 function AllScheduleView({ employees, shifts, weeks, weekIdx, setWeekIdx, nextWeekPlan, onGenerate }) {
   const week = weeks[weekIdx];
   const [q, setQ] = useState("");
-  const filtered = sortBySeat(employees.filter((e) => e.name.includes(q.trim())));
+  const filtered = sortBySeat(employees.filter((e) => e.name.includes(q.trim())), week?.dates[0]);
   const isLastWeek = weekIdx === weeks.length - 1;
 
   return (
@@ -757,7 +787,7 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
       <Field label="2. 교환 상대">
         <select value={targetId} onChange={(e) => { setTargetId(e.target.value); setTargetDate(""); }}>
           <option value="">직원 선택</option>
-          {sortBySeat(employees.filter((e) => e.id !== me.id && e.active !== false)).map((e) => (
+          {sortBySeat(employees.filter((e) => e.id !== me.id && e.active !== false), visibleWeeks[visibleWeeks.length - 1]?.dates[0]).map((e) => (
             <option key={e.id} value={e.id}>{e.name}</option>
           ))}
         </select>
@@ -925,12 +955,13 @@ function StatusStamp({ status }) {
 }
 
 /* ============================== ADMIN VIEW ============================== */
-function AdminView({ employees, requests, codeTable, labelFor, onReplace, onRespond, onSetShift, onRefresh }) {
+function AdminView({ employees, requests, codeTable, weeks, labelFor, onReplace, onRespond, onSetShift, onRefresh }) {
   const [pin, setPin] = useState("");
   const [unlocked, setUnlocked] = useState(false);
   const [pinError, setPinError] = useState("");
 
-  const activeEmployees = sortBySeat(employees.filter((e) => e.active !== false));
+  const latestMonday = weeks?.length ? weeks[weeks.length - 1].dates[0] : null;
+  const activeEmployees = sortBySeat(employees.filter((e) => e.active !== false), latestMonday);
   const pendingRequests = requests.filter((r) => r.status === "대기").sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
   const [shiftLog, setShiftLog] = useState([]);
@@ -1087,6 +1118,7 @@ function AdminView({ employees, requests, codeTable, labelFor, onReplace, onResp
       <ManualShiftEditor
         employees={employees}
         codeTable={codeTable}
+        weekMonday={latestMonday}
         labelFor={labelFor}
         pin={pin}
         onSetShift={onSetShift}
@@ -1145,8 +1177,8 @@ function ShiftEditLog({ log, loading, error, onRefresh }) {
   );
 }
 
-function ManualShiftEditor({ employees, codeTable, labelFor, pin, onSetShift, onRefresh }) {
-  const activeEmployees = sortBySeat(employees.filter((e) => e.active !== false));
+function ManualShiftEditor({ employees, codeTable, weekMonday, labelFor, pin, onSetShift, onRefresh }) {
+  const activeEmployees = sortBySeat(employees.filter((e) => e.active !== false), weekMonday);
   const codeOptions = Object.keys(codeTable || {}).filter((c) => c !== "휴가").sort();
 
   const [empId, setEmpId] = useState("");
@@ -1263,7 +1295,7 @@ function ManualShiftEditor({ employees, codeTable, labelFor, pin, onSetShift, on
         <Field label="대체 근무자 (선택, 원래 근무를 이어받아요)">
           <select value={substituteId} onChange={(e) => { setSubstituteId(e.target.value); setConfirming(false); }}>
             <option value="">지정 안 함</option>
-            {sortBySeat(employees.filter((e) => e.active !== false && String(e.id) !== String(empId))).map((e) => (
+            {sortBySeat(employees.filter((e) => e.active !== false && String(e.id) !== String(empId)), weekMonday).map((e) => (
               <option key={e.id} value={e.id}>{e.name}</option>
             ))}
           </select>
