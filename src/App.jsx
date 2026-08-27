@@ -804,7 +804,7 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
         </select>
       </Field>
 
-      <Field label="메모 (필수)">
+      <Field label="사유 (필수)">
         <textarea rows={2} placeholder="교환 사유를 남겨주세요" value={memo} onChange={(e) => setMemo(e.target.value)} />
       </Field>
 
