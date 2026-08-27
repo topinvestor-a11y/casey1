@@ -76,6 +76,9 @@ export async function handleCreateRequest(request, env) {
   if (!requesterId || !targetId || !myDate || !targetDate) {
     return Response.json({ error: "필수 항목이 빠졌어요." }, { status: 400 });
   }
+  if (!memo || !memo.trim()) {
+    return Response.json({ error: "메모는 필수예요." }, { status: 400 });
+  }
   if (!myCode && !targetCode) {
     return Response.json({ error: "두 사람 다 비번이면 교환할 근무가 없어요." }, { status: 400 });
   }
