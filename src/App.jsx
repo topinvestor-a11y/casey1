@@ -48,11 +48,11 @@ function dowForDate(date, shifts) {
 }
 
 // Same rotation rule the server uses (generateNextWeek.js / admin.js):
-// A조 = seats 1-7,9-19 (8 is permanently vacant), B조 = seats 20-35, each
+// A조 = seats 1-19, B조 = seats 20-36, each
 // group advances by one seat per week, wrapping at the end of its group.
-const ANCHOR_MONDAY = "2026-08-31";
-const GROUP_A_SEATS = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
-const GROUP_B_SEATS = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35];
+const ANCHOR_MONDAY = "2026-09-07";
+const GROUP_A_SEATS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+const GROUP_B_SEATS = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36];
 
 function daysBetween(a, b) {
   const [ay, am, ad] = a.split("-").map(Number);
@@ -751,7 +751,7 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
   const targetDow = targetDateOptions.find((o) => o.date === targetDate)?.dow || "";
 
   // Both sides being a day off would trade nothing.
-  const canSubmit = myDate && targetEmp && targetDate && (myShift || targetShift) && targetEmp.id !== me.id && !submitting;
+  const canSubmit = myDate && targetEmp && targetDate && (myShift || targetShift) && targetEmp.id !== me.id && memo.trim().length > 0 && !submitting;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -804,7 +804,7 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
         </select>
       </Field>
 
-      <Field label="메모 (선택)">
+      <Field label="메모 (필수)">
         <textarea rows={2} placeholder="교환 사유를 남겨주세요" value={memo} onChange={(e) => setMemo(e.target.value)} />
       </Field>
 
