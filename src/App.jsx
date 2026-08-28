@@ -5,7 +5,7 @@ import {
   ChevronDown, Leaf, Home, CircleDot, Sparkles, RefreshCw, AlertTriangle,
   ShieldCheck, UserMinus, UserPlus, Lock,
 } from "lucide-react";
-import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek, replaceEmployee, setShift, fetchShiftLog } from "./api";
+import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek, replaceEmployee, setShift, fetchShiftLog, findSwapBridge } from "./api";
 
 const APP_NAME = "우리 근무표";
 const TAG_HUES = ["#3E6B49", "#46527D", "#C68A3D", "#8A5A6B", "#3E7A78", "#7A6B3E", "#5B5B8A"];
@@ -1131,6 +1131,8 @@ function AdminView({ employees, requests, codeTable, weeks, labelFor, onReplace,
       />
 
       <ShiftEditLog log={shiftLog} loading={logLoading} error={logError} onRefresh={() => loadLog(pin)} />
+
+      <SwapBridgeFinder employees={employees} weekMonday={latestMonday} pin={pin} />
     </div>
   );
 }
@@ -1174,6 +1176,144 @@ function ShiftEditLog({ log, loading, error, onRefresh }) {
                 <span style={{ fontWeight: 600 }}>{r.newLabel || "비번"}</span>
               </div>
               {r.reason && <div style={{ color: "var(--ink-soft)", marginTop: 4 }}>{r.reason}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SwapBridgeFinder({ employees, weekMonday, pin }) {
+  const activeEmployees = sortBySeat(employees.filter((e) => e.active !== false), weekMonday);
+
+  const [requesterId, setRequesterId] = useState("");
+  const [myDate, setMyDate] = useState("");
+  const [myCode, setMyCode] = useState("");
+  const [myPeriod, setMyPeriod] = useState("주간");
+  const [targetId, setTargetId] = useState("");
+  const [targetDate, setTargetDate] = useState("");
+  const [targetCode, setTargetCode] = useState("");
+  const [targetPeriod, setTargetPeriod] = useState("주간");
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const requesterEmp = employees.find((e) => String(e.id) === String(requesterId));
+  const targetEmp = employees.find((e) => String(e.id) === String(targetId));
+  const canSearch = requesterId && myDate && targetId && targetDate && targetCode && !loading;
+
+  const handleSearch = async () => {
+    if (!canSearch) return;
+    setLoading(true);
+    setError("");
+    setResult(null);
+    try {
+      const res = await findSwapBridge({
+        pin,
+        requesterId, requesterName: requesterEmp?.name,
+        myDate, myCode: myCode || null, myPeriod: myCode ? myPeriod : null,
+        targetId, targetName: targetEmp?.name,
+        targetDate, targetCode, targetPeriod,
+      });
+      setResult(res);
+    } catch (e) {
+      setError(e.message || "찾지 못했어요.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: 20, display: "grid", gap: 16 }}>
+      <div>
+        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>자동 경로 찾기 (막힌 교환 우회)</div>
+        <p style={{ fontSize: 12.5, color: "var(--ink-soft)", margin: 0 }}>
+          두 사람의 직접 교환이 인접일 근무 때문에 막혔을 때, 그 걸림돌이 되는 근무를 다른 직원에게 넘기면
+          풀리는지 전체 직원을 훑어서 찾아드려요. 실제로 아무것도 바꾸지 않고 찾기만 해요.
+        </p>
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <Field label="요청자 (근무를 받고 싶은 사람)">
+          <select value={requesterId} onChange={(e) => { setRequesterId(e.target.value); setResult(null); }}>
+            <option value="">직원 선택</option>
+            {activeEmployees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </Field>
+        <Field label="요청자가 내놓는 날짜">
+          <input type="date" value={myDate} onChange={(e) => { setMyDate(e.target.value); setResult(null); }} />
+        </Field>
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <Field label="요청자가 내놓는 코드 (비번이면 비워두세요)">
+          <input type="text" placeholder="예: 1A (없으면 비움)" value={myCode} onChange={(e) => { setMyCode(e.target.value); setResult(null); }} />
+        </Field>
+        {myCode && (
+          <Field label="주간/야간">
+            <select value={myPeriod} onChange={(e) => { setMyPeriod(e.target.value); setResult(null); }}>
+              <option value="주간">주간</option>
+              <option value="야간">야간</option>
+            </select>
+          </Field>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <Field label="상대방 (근무를 갖고 있는 사람)">
+          <select value={targetId} onChange={(e) => { setTargetId(e.target.value); setResult(null); }}>
+            <option value="">직원 선택</option>
+            {activeEmployees.filter((e) => String(e.id) !== String(requesterId)).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </Field>
+        <Field label="요청자가 받고 싶은 날짜">
+          <input type="date" value={targetDate} onChange={(e) => { setTargetDate(e.target.value); setResult(null); }} />
+        </Field>
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <Field label="받고 싶은 코드">
+          <input type="text" placeholder="예: 3B" value={targetCode} onChange={(e) => { setTargetCode(e.target.value); setResult(null); }} />
+        </Field>
+        <Field label="주간/야간">
+          <select value={targetPeriod} onChange={(e) => { setTargetPeriod(e.target.value); setResult(null); }}>
+            <option value="주간">주간</option>
+            <option value="야간">야간</option>
+          </select>
+        </Field>
+      </div>
+
+      {error && <p style={{ color: "var(--clay)", fontSize: 12.5, margin: 0 }}>{error}</p>}
+
+      <button className="btn btn-primary" disabled={!canSearch} onClick={handleSearch} style={{ justifyContent: "center" }}>
+        {loading ? "찾는 중…" : "경로 찾기"}
+      </button>
+
+      {result && result.alreadyPossible && (
+        <div className="card" style={{ padding: 12, background: "var(--surface-2)", fontSize: 13 }}>
+          이 교환은 이미 바로 가능해요 — 굳이 우회할 필요 없이 "근무 교환" 화면에서 바로 요청하시면 돼요.
+        </div>
+      )}
+
+      {result && !result.alreadyPossible && result.bridges.length === 0 && (
+        <div className="card" style={{ padding: 12, background: "var(--surface-2)", fontSize: 13 }}>
+          전체 직원을 다 훑어봤지만, 이 교환을 풀어줄 경유 경로를 찾지 못했어요. 3일 이상 얽혀있을 수 있어요.
+        </div>
+      )}
+
+      {result && !result.alreadyPossible && result.bridges.length > 0 && (
+        <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{result.bridges.length}개 경로를 찾았어요:</div>
+          {result.bridges.map((b, i) => (
+            <div key={i} className="card" style={{ padding: 12, background: "var(--surface-2)", fontSize: 12.5 }}>
+              <div>
+                <strong>1단계</strong>: {b.movedFrom.name}님의 {b.blockDate.slice(5)} {b.movedShift.period}{b.movedShift.code} 근무를{" "}
+                <strong>{b.bridgeEmployeeName}</strong>님에게 넘기기
+                {b.bridgeGivesBack && ` (대신 ${b.bridgeEmployeeName}님의 그날 ${b.bridgeGivesBack.period}${b.bridgeGivesBack.code}를 ${b.movedFrom.name}님이 받음)`}
+              </div>
+              <div style={{ marginTop: 4 }}><strong>2단계</strong>: 원래 목표했던 교환을 그 다음에 진행</div>
             </div>
           ))}
         </div>

@@ -66,3 +66,11 @@ export function setShift(payload) {
 export function fetchShiftLog(pin, limit = 100) {
   return fetch(`/api/admin/shift-log?pin=${encodeURIComponent(pin)}&limit=${limit}`).then(handle);
 }
+
+export function findSwapBridge(payload) {
+  return fetch("/api/admin/find-swap-bridge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then(handle);
+}
