@@ -51,7 +51,7 @@ function dowForDate(date, shifts) {
 // A조 = seats 1-19, B조 = seats 20-36, each
 // group advances by one seat per week, wrapping at the end of its group.
 const ANCHOR_MONDAY = "2026-09-07";
-const GROUP_A_SEATS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+const GROUP_A_SEATS = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
 const GROUP_B_SEATS = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36];
 
 function daysBetween(a, b) {
@@ -1137,7 +1137,7 @@ function ShiftEditLog({ log, loading, error, onRefresh }) {
         <div>
           <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>근무 직접 수정 이력</div>
           <p style={{ fontSize: 12.5, color: "var(--ink-soft)", margin: 0 }}>
-            휴가·비번·특정 코드 변경 기록이에요 (최근 순). 근무 교환은 여기 안 나와요.
+            비번·특정 코드 변경 기록이에요 (최근 순). 근무 교환은 여기 안 나와요.
           </p>
         </div>
         <button className="btn btn-ghost" onClick={onRefresh} disabled={loading}>
@@ -1179,7 +1179,7 @@ function ShiftEditLog({ log, loading, error, onRefresh }) {
 
 function ManualShiftEditor({ employees, codeTable, weekMonday, labelFor, pin, onSetShift, onRefresh }) {
   const activeEmployees = sortBySeat(employees.filter((e) => e.active !== false), weekMonday);
-  const codeOptions = Object.keys(codeTable || {}).filter((c) => c !== "휴가").sort();
+  const codeOptions = Object.keys(codeTable || {}).filter((c) => c !== "비번").sort();
 
   const [empId, setEmpId] = useState("");
   const [mode, setMode] = useState("leave"); // leave | code | clear
@@ -1236,7 +1236,7 @@ function ManualShiftEditor({ employees, codeTable, weekMonday, labelFor, pin, on
         let res;
         if (mode === "leave") {
           res = await onSetShift({
-            pin, empId, date: d, code: "휴가", period: "주간",
+            pin, empId, date: d, code: "비번", period: "주간",
             substituteEmpId: substituteId || undefined,
           });
           if (res?.substitute) {
@@ -1285,9 +1285,9 @@ function ManualShiftEditor({ employees, codeTable, weekMonday, labelFor, pin, on
 
       <Field label="2. 작업 종류">
         <select value={mode} onChange={(e) => { setMode(e.target.value); setConfirming(false); }}>
-          <option value="leave">휴가로 설정</option>
+          <option value="leave">비번 처리 (대체 근무자 지정 가능)</option>
           <option value="code">특정 근무 코드로 설정</option>
-          <option value="clear">근무 없음(비번)으로 비우기</option>
+          <option value="clear">근무 기록 삭제 (대체자 없음)</option>
         </select>
       </Field>
 
