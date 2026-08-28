@@ -579,7 +579,7 @@ function AllScheduleView({ employees, shifts, weeks, weekIdx, setWeekIdx, nextWe
                     <span style={{ width: 7, height: 7, borderRadius: 999, background: hueFor(emp.id), display: "inline-block" }} />
                     {emp.name}
                     {emp.active === false && (
-                      <span style={{ fontSize: 10, color: "var(--ink-soft)", fontWeight: 500, border: "1px solid var(--line)", borderRadius: 4, padding: "0 4px" }}>퇴사</span>
+                      <span style={{ fontSize: 10, color: "var(--ink-soft)", fontWeight: 500, border: "1px solid var(--line)", borderRadius: 4, padding: "0 4px" }}>휴직</span>
                     )}
                   </span>
                 </td>
