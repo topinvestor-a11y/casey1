@@ -1,3 +1,5 @@
+import { checkTwelveHourRest } from "./restCheck.js";
+
 // POST /api/admin/replace-employee
 // body: { pin, retiringEmpId, newEmployeeName }
 //
@@ -63,9 +65,9 @@ export async function handleReplaceEmployee(request, env) {
 
 // POST /api/admin/set-shift
 // body: { pin, empId, date, code, period }
-// code = null clears the shift (becomes 비번). code = '휴가' marks leave.
-// Otherwise code must be a real code_table entry. Upserts the shifts row —
-// used for manual corrections (vacation, extended leave, one-off edits).
+// code = null clears the shift row entirely. code = '비번' marks an
+// explicit non-working status (with substitute handoff support) — distinct
+// from a cleared row, which also displays as "비번" but has no such tracking.
 function dowForDateAdmin(dateStr) {
   const [y, m, d] = dateStr.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -115,11 +117,11 @@ export async function handleSetShift(request, env) {
     return Response.json({ error: "해당 직원을 찾을 수 없어요." }, { status: 404 });
   }
 
-  // Leaving on 휴가 usually means someone else has to cover the duty this
+  // Leaving on 비번 usually means someone else has to cover the duty this
   // person would have had — capture it now, before it's overwritten, so it
   // can be handed to a substitute below.
   let vacatedShift = null;
-  if (code === "휴가") {
+  if (code === "비번") {
     vacatedShift = await db
       .prepare("SELECT code, period FROM shifts WHERE date = ? AND emp_id = ?")
       .bind(date, empId)
@@ -130,7 +132,7 @@ export async function handleSetShift(request, env) {
   // different shift that day, handing them the vacated duty would just
   // silently create a new coverage gap in their place. Block instead.
   let sub = null;
-  if (code === "휴가" && body.substituteEmpId && vacatedShift) {
+  if (code === "비번" && body.substituteEmpId && vacatedShift) {
     sub = await db.prepare("SELECT id, name FROM employees WHERE id = ?").bind(body.substituteEmpId).first();
     if (!sub) {
       return Response.json({ error: "대체 근무자를 찾을 수 없어요." }, { status: 404 });
@@ -154,9 +156,9 @@ export async function handleSetShift(request, env) {
 
   let substituteResult = null;
   if (sub) {
-    const subResult = await assignShift(db, sub.id, sub.name, date, vacatedShift.code, vacatedShift.period, "휴가자 대체 근무 배정");
+    const subResult = await assignShift(db, sub.id, sub.name, date, vacatedShift.code, vacatedShift.period, "비번자 대체 근무 배정");
     if (subResult.error) {
-      return Response.json({ error: `휴가는 처리됐지만, 대체 근무자 배정에 실패했어요: ${subResult.error}` }, { status: subResult.status });
+      return Response.json({ error: `비번 처리는 됐지만, 대체 근무자 배정에 실패했어요: ${subResult.error}` }, { status: subResult.status });
     }
     substituteResult = { empId: sub.id, name: sub.name, code: vacatedShift.code, period: vacatedShift.period, label: subResult.label };
   }
@@ -201,8 +203,8 @@ async function assignShift(db, empId, empName, date, code, period, reason) {
   let finalPeriod = period || "주간";
   let swappable = 1;
 
-  if (code === "휴가") {
-    label = "휴가";
+  if (code === "비번") {
+    label = "비번";
     finalPeriod = "주간";
     swappable = 0;
   } else {
@@ -214,10 +216,10 @@ async function assignShift(db, empId, empName, date, code, period, reason) {
   }
 
   // A real duty code is a single slot — only one person can hold a given
-  // (date, period, code) at a time. Vacation ("휴가") is a personal status,
+  // (date, period, code) at a time. Vacation ("비번") is a personal status,
   // not a slot, so it's exempt.
   let freed = [];
-  if (code !== "휴가") {
+  if (code !== "비번") {
     const holders = await db
       .prepare("SELECT emp_id, emp_name, code, period, label FROM shifts WHERE date = ? AND period = ? AND code = ? AND emp_id != ?")
       .bind(date, finalPeriod, code, empId)
@@ -242,32 +244,11 @@ async function assignShift(db, empId, empName, date, code, period, reason) {
       freed = holders.results.map((h) => h.emp_name);
     }
 
-    // Same night-then-day / day-after-night rest check used for swaps.
-    if (finalPeriod === "야간") {
-      const nextDate = dateAddAdmin(date, 1);
-      const clash = await db
-        .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ? AND period = '주간'")
-        .bind(nextDate, empId)
-        .first();
-      if (clash) {
-        return {
-          error: `${empName}님이 ${formatDateAdmin(nextDate)}에 주간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 다른 코드를 선택해주세요.`,
-          status: 409,
-        };
-      }
-    }
-    if (finalPeriod === "주간") {
-      const prevDate = dateAddAdmin(date, -1);
-      const clash = await db
-        .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ? AND period = '야간'")
-        .bind(prevDate, empId)
-        .first();
-      if (clash) {
-        return {
-          error: `${empName}님이 ${formatDateAdmin(prevDate)}에 야간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 다른 코드를 선택해주세요.`,
-          status: 409,
-        };
-      }
+    // Real clock-hours check: gaining this shift must still leave at least
+    // 12 hours of rest against whatever's on the adjacent day.
+    const restMsg = await checkTwelveHourRest(db, empId, empName, date, code, finalPeriod);
+    if (restMsg) {
+      return { error: restMsg.replace("교환할 수 없어요.", "다른 코드를 선택해주세요."), status: 409 };
     }
   }
 
