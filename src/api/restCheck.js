@@ -103,4 +103,53 @@ async function checkTwelveHourRest(db, empId, empName, date, code, period) {
   return null;
 }
 
-export { HOURS_TABLE, MIN_REST_HOURS, getShiftBounds, restHoursBetweenAdjacentDays, checkTwelveHourRest };
+// Like checkTwelveHourRest, but for when MULTIPLE dates are changing for the
+// same employee in one transaction (a reciprocal 2-day swap). `finalStates`
+// maps date -> {code, period} | null (null = off) for every date that's
+// changing. When checking a neighbor day, if that neighbor is ALSO in
+// finalStates we use its post-swap value instead of querying the (soon to
+// be stale) current DB row — otherwise the check would compare against a
+// value that's about to change in this same transaction.
+async function checkRestForFinalStates(db, empId, empName, finalStates) {
+  for (const date of Object.keys(finalStates)) {
+    const cur = finalStates[date];
+    if (!cur || !cur.code || cur.code === "비번") continue;
+
+    const nextDate = dateAddShared(date, 1);
+    let next;
+    if (Object.prototype.hasOwnProperty.call(finalStates, nextDate)) {
+      next = finalStates[nextDate];
+    } else {
+      next = await db.prepare("SELECT code, period FROM shifts WHERE date = ? AND emp_id = ?").bind(nextDate, empId).first();
+    }
+    if (next) {
+      if (cur.period === "야간" && next.period === "주간") {
+        return `${empName}님이 ${formatDateShared(nextDate)}에 주간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 교환할 수 없어요.`;
+      }
+      const rest = restHoursBetweenAdjacentDays(cur.code, cur.period, next.code, next.period);
+      if (rest !== null && rest < MIN_REST_HOURS) {
+        return `${empName}님이 ${formatDateShared(nextDate)}에 근무가 있어서, 퇴근 후 휴식이 ${rest}시간뿐이에요 (최소 ${MIN_REST_HOURS}시간 필요). 교환할 수 없어요.`;
+      }
+    }
+
+    const prevDate = dateAddShared(date, -1);
+    let prev;
+    if (Object.prototype.hasOwnProperty.call(finalStates, prevDate)) {
+      prev = finalStates[prevDate];
+    } else {
+      prev = await db.prepare("SELECT code, period FROM shifts WHERE date = ? AND emp_id = ?").bind(prevDate, empId).first();
+    }
+    if (prev) {
+      if (prev.period === "야간" && cur.period === "주간") {
+        return `${empName}님이 ${formatDateShared(prevDate)}에 야간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 교환할 수 없어요.`;
+      }
+      const rest = restHoursBetweenAdjacentDays(prev.code, prev.period, cur.code, cur.period);
+      if (rest !== null && rest < MIN_REST_HOURS) {
+        return `${empName}님이 ${formatDateShared(prevDate)} 근무 이후 휴식이 ${rest}시간뿐이에요 (최소 ${MIN_REST_HOURS}시간 필요). 교환할 수 없어요.`;
+      }
+    }
+  }
+  return null;
+}
+
+export { HOURS_TABLE, MIN_REST_HOURS, getShiftBounds, restHoursBetweenAdjacentDays, checkTwelveHourRest, checkRestForFinalStates, dateAddShared, formatDateShared };
