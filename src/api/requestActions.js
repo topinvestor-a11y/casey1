@@ -104,7 +104,7 @@ export async function handleRespond(id, request, env) {
           .first();
         if (targetOnMyDate) {
           return Response.json(
-            { error: `상대방이 그 사이 ${formatDate(req.my_date)}에 다른 근무가 생겨서 처리하지 못했어요.` },
+            { error: "12시간 위배로 근무교환이 불가합니다." },
             { status: 409 }
           );
         }
@@ -116,7 +116,7 @@ export async function handleRespond(id, request, env) {
           .first();
         if (requesterOnTargetDate) {
           return Response.json(
-            { error: `그 사이 ${formatDate(req.target_date)}에 내 근무가 생겨서 처리하지 못했어요.` },
+            { error: "12시간 위배로 근무교환이 불가합니다." },
             { status: 409 }
           );
         }
