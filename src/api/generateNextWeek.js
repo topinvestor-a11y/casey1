@@ -1,6 +1,6 @@
-const ANCHOR_MONDAY = "2026-08-31";
-const GROUP_A_SEATS = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
-const GROUP_B_SEATS = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35];
+const ANCHOR_MONDAY = "2026-09-07";
+const GROUP_A_SEATS = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+const GROUP_B_SEATS = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36];
 const WEEKDAY_ORDER = ["월", "화", "수", "목", "금", "토", "일"];
 
 function dateAdd(dateStr, days) {
