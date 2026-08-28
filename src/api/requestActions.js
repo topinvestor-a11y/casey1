@@ -1,39 +1,11 @@
+import { checkTwelveHourRest } from "./restCheck.js";
+
 export async function handleRespond(id, request, env) {
   const db = env.DB;
 
   function formatDate(dateStr) {
     const [, m, d] = dateStr.split("-");
     return `${Number(m)}월 ${Number(d)}일`;
-  }
-
-  function dateAdd(dateStr, days) {
-    const [y, m, d] = dateStr.split("-").map(Number);
-    const dt = new Date(Date.UTC(y, m - 1, d));
-    dt.setUTCDate(dt.getUTCDate() + days);
-    const yy = dt.getUTCFullYear();
-    const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
-    const dd = String(dt.getUTCDate()).padStart(2, "0");
-    return `${yy}-${mm}-${dd}`;
-  }
-
-  async function findRestConflict(empId, empName, date, period) {
-    if (period === "야간") {
-      const nextDate = dateAdd(date, 1);
-      const clash = await db
-        .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ? AND period = '주간'")
-        .bind(nextDate, empId)
-        .first();
-      if (clash) return `${empName}님이 ${formatDate(nextDate)}에 주간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 처리하지 못했어요.`;
-    }
-    if (period === "주간") {
-      const prevDate = dateAdd(date, -1);
-      const clash = await db
-        .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ? AND period = '야간'")
-        .bind(prevDate, empId)
-        .first();
-      if (clash) return `${empName}님이 ${formatDate(prevDate)}에 야간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 처리하지 못했어요.`;
-    }
-    return null;
   }
 
   let body;
@@ -116,11 +88,11 @@ export async function handleRespond(id, request, env) {
     }
 
     if (a) {
-      const msg = await findRestConflict(req.target_id, req.target_name, req.my_date, req.my_period);
+      const msg = await checkTwelveHourRest(db, req.target_id, req.target_name, req.my_date, req.my_code, req.my_period);
       if (msg) return Response.json({ error: msg }, { status: 409 });
     }
     if (b) {
-      const msg = await findRestConflict(req.requester_id, req.requester_name, req.target_date, req.target_period);
+      const msg = await checkTwelveHourRest(db, req.requester_id, req.requester_name, req.target_date, req.target_code, req.target_period);
       if (msg) return Response.json({ error: msg }, { status: 409 });
     }
 
