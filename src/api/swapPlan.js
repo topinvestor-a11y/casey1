@@ -1,20 +1,12 @@
 import { checkRestForFinalStates } from "./restCheck.js";
 
-// When requester and target are trading (myDate, myCode) for (targetDate,
-// targetCode) and the dates differ, either side might ALREADY have their
-// own separate shift on the OTHER person's date. Rather than blocking that,
-// complete the loop: that leftover shift also changes hands between the
-// same two people, so nobody's day goes unstaffed and no third party is
-// ever touched. Rest-hours are checked using the FINAL combined state for
-// both dates together (not one at a time), since both may be changing in
-// this same transaction.
-//
-// Returns { error, status } or { ok: true, rowC, rowD } where rowC is the
-// requester's existing row on targetDate (or null) and rowD is the
-// target's existing row on myDate (or null) — looked up fresh from the DB.
-export async function planReciprocalSwap(db, {
-  requesterId, requesterName, myDate, myCode, myPeriod,
-  targetId, targetName, targetDate, targetCode, targetPeriod,
+// Computes the reciprocal exchange (rowC/rowD) and the resulting final
+// per-date state for both people, without running any validation. Split
+// out from planReciprocalSwap so swapBridge.js can reuse it with an
+// injected override for a third party's involvement.
+export async function computeReciprocalFinalStates(db, {
+  requesterId, myDate, myCode, myPeriod,
+  targetId, targetDate, targetCode, targetPeriod,
 }) {
   let rowC = null;
   let rowD = null;
@@ -34,7 +26,6 @@ export async function planReciprocalSwap(db, {
     }
   }
 
-  // Final combined state per person per date (null = off that day).
   const requesterFinal = {
     [myDate]: rowD ? { code: rowD.code, period: rowD.period } : null,
     [targetDate]: targetCode ? { code: targetCode, period: targetPeriod } : null,
@@ -43,6 +34,25 @@ export async function planReciprocalSwap(db, {
     [myDate]: myCode ? { code: myCode, period: myPeriod } : null,
     [targetDate]: rowC ? { code: rowC.code, period: rowC.period } : null,
   };
+
+  return { rowC, rowD, requesterFinal, targetFinal };
+}
+
+// When requester and target are trading (myDate, myCode) for (targetDate,
+// targetCode) and the dates differ, either side might ALREADY have their
+// own separate shift on the OTHER person's date. Rather than blocking that,
+// complete the loop: that leftover shift also changes hands between the
+// same two people, so nobody's day goes unstaffed and no third party is
+// ever touched. Rest-hours are checked using the FINAL combined state for
+// both dates together (not one at a time), since both may be changing in
+// this same transaction.
+//
+// Returns { error, status } or { ok: true, rowC, rowD } where rowC is the
+// requester's existing row on targetDate (or null) and rowD is the
+// target's existing row on myDate (or null) — looked up fresh from the DB.
+export async function planReciprocalSwap(db, params) {
+  const { requesterId, requesterName, targetId, targetName } = params;
+  const { rowC, rowD, requesterFinal, targetFinal } = await computeReciprocalFinalStates(db, params);
 
   const msg1 = await checkRestForFinalStates(db, requesterId, requesterName, requesterFinal);
   if (msg1) return { error: msg1, status: 409 };
