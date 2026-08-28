@@ -1,4 +1,4 @@
-import { checkTwelveHourRest } from "./restCheck.js";
+import { checkRestForFinalStates } from "./restCheck.js";
 
 export async function handleRespond(id, request, env) {
   const db = env.DB;
@@ -87,65 +87,84 @@ export async function handleRespond(id, request, env) {
       return Response.json({ error: "교환할 근무가 없어요." }, { status: 409 });
     }
 
-    if (a) {
-      const msg = await checkTwelveHourRest(db, req.target_id, req.target_name, req.my_date, req.my_code, req.my_period);
-      if (msg) return Response.json({ error: msg }, { status: 409 });
-    }
-    if (b) {
-      const msg = await checkTwelveHourRest(db, req.requester_id, req.requester_name, req.target_date, req.target_code, req.target_period);
-      if (msg) return Response.json({ error: msg }, { status: 409 });
-    }
-
+    // If either side ALREADY has their own separate shift on the OTHER
+    // person's date, that leftover shift trades hands too (between these
+    // same two people only) so the exchange completes without leaving
+    // anyone double-booked or unstaffed.
+    let rowC = null;
+    let rowD = null;
     if (req.my_date !== req.target_date) {
-      if (a) {
-        const targetOnMyDate = await db
-          .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ?")
-          .bind(req.my_date, req.target_id)
-          .first();
-        if (targetOnMyDate) {
-          return Response.json(
-            { error: "12시간 위배로 근무교환이 불가합니다." },
-            { status: 409 }
-          );
-        }
-      }
-      if (b) {
-        const requesterOnTargetDate = await db
-          .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ?")
+      if (req.target_code) {
+        rowC = await db
+          .prepare("SELECT id, code, period FROM shifts WHERE date = ? AND emp_id = ?")
           .bind(req.target_date, req.requester_id)
           .first();
-        if (requesterOnTargetDate) {
-          return Response.json(
-            { error: "12시간 위배로 근무교환이 불가합니다." },
-            { status: 409 }
-          );
-        }
+      }
+      if (req.my_code) {
+        rowD = await db
+          .prepare("SELECT id, code, period FROM shifts WHERE date = ? AND emp_id = ?")
+          .bind(req.my_date, req.target_id)
+          .first();
       }
     }
 
-    if (a && b) {
-      // Placeholder emp_id avoids a UNIQUE(date, emp_id) collision when both
-      // shifts fall on the same date. Row `a` (was the requester's) becomes
-      // the target's, and row `b` (was the target's) becomes the requester's.
-      await db.batch([
-        db.prepare("UPDATE shifts SET emp_id = -1 WHERE id = ?").bind(a.id),
-        db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.requester_id, req.requester_name, b.id),
-        db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.target_id, req.target_name, a.id),
-        db.prepare("UPDATE swap_requests SET status = '완료', processed_at = ? WHERE id = ?").bind(processedAt, id),
-      ]);
-    } else if (a && !b) {
-      // Requester's day off on the other side: the target simply takes over row `a`.
-      await db.batch([
-        db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.target_id, req.target_name, a.id),
-        db.prepare("UPDATE swap_requests SET status = '완료', processed_at = ? WHERE id = ?").bind(processedAt, id),
-      ]);
+    // Rest-hours validated using the FINAL combined state for both dates
+    // together (re-checked here in case anything shifted since the
+    // request was created).
+    const requesterFinal = {
+      [req.my_date]: rowD ? { code: rowD.code, period: rowD.period } : null,
+      [req.target_date]: req.target_code ? { code: req.target_code, period: req.target_period } : null,
+    };
+    const targetFinal = {
+      [req.my_date]: req.my_code ? { code: req.my_code, period: req.my_period } : null,
+      [req.target_date]: rowC ? { code: rowC.code, period: rowC.period } : null,
+    };
+    const msg1 = await checkRestForFinalStates(db, req.requester_id, req.requester_name, requesterFinal);
+    if (msg1) return Response.json({ error: msg1 }, { status: 409 });
+    const msg2 = await checkRestForFinalStates(db, req.target_id, req.target_name, targetFinal);
+    if (msg2) return Response.json({ error: msg2 }, { status: 409 });
+
+    const updates = [];
+
+    if (req.my_date === req.target_date) {
+      // Same-date swap: only rows a/b are involved.
+      if (a && b) {
+        updates.push(db.prepare("UPDATE shifts SET emp_id = -1 WHERE id = ?").bind(a.id));
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.requester_id, req.requester_name, b.id));
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.target_id, req.target_name, a.id));
+      } else if (a && !b) {
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.target_id, req.target_name, a.id));
+      } else {
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.requester_id, req.requester_name, b.id));
+      }
     } else {
-      // Target's day off: the requester takes over row `b`.
-      await db.batch([
-        db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.requester_id, req.requester_name, b.id),
-        db.prepare("UPDATE swap_requests SET status = '완료', processed_at = ? WHERE id = ?").bind(processedAt, id),
-      ]);
+      // myDate side: row a (requester -> target) and, if it exists, row D
+      // (target's own shift there, which reciprocally moves to requester).
+      if (a && rowD) {
+        updates.push(db.prepare("UPDATE shifts SET emp_id = -1 WHERE id = ?").bind(a.id));
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.requester_id, req.requester_name, rowD.id));
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.target_id, req.target_name, a.id));
+      } else if (a && !rowD) {
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.target_id, req.target_name, a.id));
+      } else if (!a && rowD) {
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.requester_id, req.requester_name, rowD.id));
+      }
+
+      // targetDate side: row b (target -> requester) and, if it exists,
+      // row C (requester's own shift there, reciprocally moving to target).
+      if (b && rowC) {
+        updates.push(db.prepare("UPDATE shifts SET emp_id = -1 WHERE id = ?").bind(b.id));
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.target_id, req.target_name, rowC.id));
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.requester_id, req.requester_name, b.id));
+      } else if (b && !rowC) {
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.requester_id, req.requester_name, b.id));
+      } else if (!b && rowC) {
+        updates.push(db.prepare("UPDATE shifts SET emp_id = ?, emp_name = ? WHERE id = ?").bind(req.target_id, req.target_name, rowC.id));
+      }
     }
+
+    updates.push(db.prepare("UPDATE swap_requests SET status = '완료', processed_at = ? WHERE id = ?").bind(processedAt, id));
+    await db.batch(updates);
   } else {
     await db.prepare("UPDATE swap_requests SET status = '거절', processed_at = ? WHERE id = ?").bind(processedAt, id).run();
   }
