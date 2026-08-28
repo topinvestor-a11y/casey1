@@ -215,8 +215,13 @@ export default function App() {
       setLoadError(null);
       if (!opts.silent) setReady(true);
     } catch (e) {
-      setLoadError(e.message || "데이터를 불러오지 못했어요.");
-      if (!opts.silent) setReady(true);
+      // A silent background poll failing (brief network blip, etc.) shouldn't
+      // yank the user out of whatever they're doing into a full error
+      // screen — only the very first load should be able to show that.
+      if (!opts.silent) {
+        setLoadError(e.message || "데이터를 불러오지 못했어요.");
+        setReady(true);
+      }
     }
   }, []);
 
