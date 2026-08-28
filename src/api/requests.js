@@ -1,3 +1,5 @@
+import { checkTwelveHourRest } from "./restCheck.js";
+
 function uid() {
   return crypto.randomUUID();
 }
@@ -15,30 +17,6 @@ function dateAdd(dateStr, days) {
   const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
   const dd = String(dt.getUTCDate()).padStart(2, "0");
   return `${yy}-${mm}-${dd}`;
-}
-
-// A night shift immediately followed by a day shift the next day (or a day
-// shift right after a night shift the day before) leaves no rest between
-// them. Checks whether `empId` would end up in that situation after gaining
-// a shift with the given date/period.
-async function findRestConflict(db, empId, empName, date, period) {
-  if (period === "야간") {
-    const nextDate = dateAdd(date, 1);
-    const clash = await db
-      .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ? AND period = '주간'")
-      .bind(nextDate, empId)
-      .first();
-    if (clash) return `${empName}님이 ${formatDate(nextDate)}에 주간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 교환할 수 없어요.`;
-  }
-  if (period === "주간") {
-    const prevDate = dateAdd(date, -1);
-    const clash = await db
-      .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ? AND period = '야간'")
-      .bind(prevDate, empId)
-      .first();
-    if (clash) return `${empName}님이 ${formatDate(prevDate)}에 야간 근무가 있어서, 밤을 새고 바로 이어지는 근무가 돼요. 교환할 수 없어요.`;
-  }
-  return null;
 }
 
 export async function handleListRequests(env) {
@@ -143,14 +121,14 @@ export async function handleCreateRequest(request, env) {
     }
   }
 
-  // A night shift right next to a day shift on the adjacent date leaves no
-  // rest — check both people for whichever new shift they'd be gaining.
+  // A real clock-hours check: whoever gains a new shift must still get at
+  // least 12 hours of rest against whatever they have on the adjacent day.
   if (myCode) {
-    const msg = await findRestConflict(db, targetId, targetName, myDate, myPeriod);
+    const msg = await checkTwelveHourRest(db, targetId, targetName, myDate, myCode, myPeriod);
     if (msg) return Response.json({ error: msg }, { status: 409 });
   }
   if (targetCode) {
-    const msg = await findRestConflict(db, requesterId, requesterName, targetDate, targetPeriod);
+    const msg = await checkTwelveHourRest(db, requesterId, requesterName, targetDate, targetCode, targetPeriod);
     if (msg) return Response.json({ error: msg }, { status: 409 });
   }
 
