@@ -1,4 +1,4 @@
-import { checkTwelveHourRest } from "./restCheck.js";
+import { planReciprocalSwap } from "./swapPlan.js";
 
 function uid() {
   return crypto.randomUUID();
@@ -92,44 +92,17 @@ export async function handleCreateRequest(request, env) {
     return Response.json({ error: "상대방에게 이미 그 날짜에 근무가 생겼어요. 새로고침 후 다시 시도해주세요." }, { status: 409 });
   }
 
-  // A swap would double-book either side if they already independently
-  // have a shift on the date they'd be taking over.
-  if (myDate !== targetDate) {
-    if (myCode) {
-      const targetOnMyDate = await db
-        .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ?")
-        .bind(myDate, targetId)
-        .first();
-      if (targetOnMyDate) {
-        return Response.json(
-          { error: "12시간 위배로 근무교환이 불가합니다." },
-          { status: 409 }
-        );
-      }
-    }
-    if (targetCode) {
-      const requesterOnTargetDate = await db
-        .prepare("SELECT 1 FROM shifts WHERE date = ? AND emp_id = ?")
-        .bind(targetDate, requesterId)
-        .first();
-      if (requesterOnTargetDate) {
-        return Response.json(
-          { error: "12시간 위배로 근무교환이 불가합니다." },
-          { status: 409 }
-        );
-      }
-    }
-  }
-
-  // A real clock-hours check: whoever gains a new shift must still get at
-  // least 12 hours of rest against whatever they have on the adjacent day.
-  if (myCode) {
-    const msg = await checkTwelveHourRest(db, targetId, targetName, myDate, myCode, myPeriod);
-    if (msg) return Response.json({ error: msg }, { status: 409 });
-  }
-  if (targetCode) {
-    const msg = await checkTwelveHourRest(db, requesterId, requesterName, targetDate, targetCode, targetPeriod);
-    if (msg) return Response.json({ error: msg }, { status: 409 });
+  // Plan the exchange: if either side already has their own shift on the
+  // OTHER person's date, that leftover shift trades hands too (between
+  // these same two people only), so the swap can still complete without
+  // leaving anyone double-booked or unstaffed. Rest hours are validated
+  // using the final combined state for both affected dates together.
+  const plan = await planReciprocalSwap(db, {
+    requesterId, requesterName, myDate, myCode, myPeriod,
+    targetId, targetName, targetDate, targetCode, targetPeriod,
+  });
+  if (plan.error) {
+    return Response.json({ error: plan.error }, { status: plan.status });
   }
 
   const id = uid();
