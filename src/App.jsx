@@ -749,10 +749,19 @@ function SubTab({ id, sub, setSub, icon: Icon, label, badge }) {
 }
 
 function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
-  const visibleWeeks = weeks.slice(-3);
-  const visibleDates = visibleWeeks.flatMap((w) => w.dates);
-  const rangeLabel = visibleWeeks.length
-    ? `${visibleWeeks[0].dates[0].slice(5)} ~ ${visibleWeeks[visibleWeeks.length - 1].dates[6].slice(5)}`
+  // Anchor to the week containing today, not just "the last 3 stored" —
+  // that could include stale past weeks or skip the current one if extra
+  // future weeks were pre-generated. Also drop any individual day before
+  // today within that first week (already passed, mid-week).
+  const todayIdx = useMemo(() => findTodayWeekIndex(weeks), [weeks]);
+  const visibleWeeks = weeks.slice(todayIdx, todayIdx + 3);
+  const todayStr = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  }, []);
+  const visibleDates = visibleWeeks.flatMap((w) => w.dates).filter((d) => d >= todayStr);
+  const rangeLabel = visibleDates.length
+    ? `${visibleDates[0].slice(5)} ~ ${visibleDates[visibleDates.length - 1].slice(5)}`
     : "";
 
   const [myDate, setMyDate] = useState("");
