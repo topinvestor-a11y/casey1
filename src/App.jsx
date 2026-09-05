@@ -36,6 +36,21 @@ function buildWeeks(shifts) {
   return weeks;
 }
 
+// Finds the index of the week containing today's date, so the schedule
+// view opens on "this week" instead of always the earliest one. If today
+// falls outside every generated week, defaults to the nearest edge (before
+// the first week, or after the last).
+function findTodayWeekIndex(weeks) {
+  if (!weeks || weeks.length === 0) return 0;
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  for (let i = 0; i < weeks.length; i++) {
+    if (weeks[i].dates.includes(todayStr)) return i;
+  }
+  if (todayStr < weeks[0].dates[0]) return 0;
+  return weeks.length - 1;
+}
+
 function isWeekend(dow) {
   return dow === "토" || dow === "일";
 }
@@ -198,6 +213,17 @@ export default function App() {
 
   const labelFor = useMemo(() => labelForFactory(codeTable), [codeTable]);
   const weeks = useMemo(() => buildWeeks(shifts), [shifts]);
+
+  // Open the schedule on "this week" (by today's real date) on first load,
+  // rather than always the earliest generated week. Only runs once — after
+  // that, the person's own navigation (WeekSwitcher) takes over.
+  const weekAutoSet = useRef(false);
+  useEffect(() => {
+    if (!weekAutoSet.current && weeks.length > 0) {
+      setWeekIdx(findTodayWeekIndex(weeks));
+      weekAutoSet.current = true;
+    }
+  }, [weeks]);
 
   const notify = useCallback((msg, tone = "ok") => {
     setToast({ msg, tone });
