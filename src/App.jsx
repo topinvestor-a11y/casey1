@@ -20,6 +20,7 @@ function hueFor(id) {
 function buildWeeks(shifts) {
   const dates = Array.from(new Set(shifts.map((s) => s.date))).sort();
   const weeks = [];
+  const weekCountByMonth = {};
   for (let i = 0; i < dates.length; i += 7) {
     const chunk = dates.slice(i, i + 7);
     if (chunk.length === 0) continue;
@@ -27,8 +28,17 @@ function buildWeeks(shifts) {
       const [, m, day] = d.split("-");
       return `${m}.${day}`;
     };
+    // Which month "owns" this week: whichever month most of its days fall
+    // in (e.g. 08-31~09-06 is mostly September, so it's a September week).
+    const dayCountByMonth = {};
+    for (const d of chunk) {
+      const m = Number(d.split("-")[1]);
+      dayCountByMonth[m] = (dayCountByMonth[m] || 0) + 1;
+    }
+    const month = Number(Object.entries(dayCountByMonth).sort((a, b) => b[1] - a[1])[0][0]);
+    weekCountByMonth[month] = (weekCountByMonth[month] || 0) + 1;
     weeks.push({
-      label: `${weeks.length + 1}주차`,
+      label: `${month}월 ${weekCountByMonth[month]}주차`,
       range: `${fmt(chunk[0])} ~ ${fmt(chunk[chunk.length - 1])}`,
       dates: chunk,
     });
