@@ -65,6 +65,26 @@ function isWeekend(dow) {
   return dow === "토" || dow === "일";
 }
 
+// Actual duration in hours for each shift code/period, matching the same
+// clock-hours table used server-side for the 12-hour rest check. 비번 and
+// any unrecognized code count as 0 (no real work time).
+const SHIFT_HOURS = {
+  "1": { 주간: 12, 야간: 12 }, "1A": { 주간: 12, 야간: 12 }, "1B": { 주간: 12, 야간: 12 },
+  "1D": { 주간: 12, 야간: 12 }, "3": { 주간: 12, 야간: 12 }, "5": { 주간: 12, 야간: 12 }, "5A": { 주간: 12, 야간: 12 },
+  "1C": { 주간: 10, 야간: 10 }, "3A": { 주간: 10, 야간: 10 },
+  "3B": { 주간: 10, 야간: 5 },
+  "R": { 주간: 8, 야간: 8 }, "R1": { 주간: 8, 야간: 8 },
+  "N": { 주간: 12, 야간: 0 }, "N1": { 주간: 12, 야간: 0 },
+};
+function shiftHours(code, period) {
+  const entry = SHIFT_HOURS[code];
+  if (!entry) return 0;
+  return entry[period] || 0;
+}
+function weeklyTotalHours(shiftsForWeek) {
+  return shiftsForWeek.reduce((sum, s) => sum + shiftHours(s.code, s.period), 0);
+}
+
 // Look up the weekday label for a date from any employee's shift that day
 // (every employee shares the same weekday for a given date).
 function dowForDate(date, shifts) {
@@ -557,9 +577,14 @@ function WeekSwitcher({ weeks, weekIdx, setWeekIdx }) {
 /* ============================== MY SCHEDULE ============================== */
 function MyScheduleView({ me, shifts, weeks, weekIdx, setWeekIdx }) {
   const week = weeks[weekIdx];
+  const myWeekShifts = (week?.dates || []).map((date) => shifts.find((s) => s.date === date && s.empId === me.id)).filter(Boolean);
+  const totalHours = weeklyTotalHours(myWeekShifts);
   return (
     <div>
       <WeekSwitcher weeks={weeks} weekIdx={weekIdx} setWeekIdx={setWeekIdx} />
+      <div style={{ textAlign: "center", fontSize: 13, color: "var(--ink-soft)", marginBottom: 10 }}>
+        이번 주 총 근무시간: <strong style={{ color: "var(--ink)", fontFamily: "var(--font-mono)" }}>{totalHours}시간</strong>
+      </div>
       <div style={{ display: "grid", gap: 8 }}>
         {week?.dates.map((date) => {
           const shift = shifts.find((s) => s.date === date && s.empId === me.id) || null;
@@ -610,6 +635,7 @@ function AllScheduleView({ employees, shifts, weeks, weekIdx, setWeekIdx, nextWe
                   </th>
                 );
               })}
+              <th style={{ ...thStyle("center"), borderLeft: "1px solid var(--line)" }}>합계</th>
             </tr>
           </thead>
           <tbody>
@@ -632,6 +658,9 @@ function AllScheduleView({ employees, shifts, weeks, weekIdx, setWeekIdx, nextWe
                     </td>
                   );
                 })}
+                <td style={{ ...tdStyle, textAlign: "center", borderLeft: "1px solid var(--line)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>
+                  {weeklyTotalHours((week?.dates || []).map((d) => shifts.find((s) => s.date === d && s.empId === emp.id)).filter(Boolean))}시간
+                </td>
               </tr>
             ))}
           </tbody>
