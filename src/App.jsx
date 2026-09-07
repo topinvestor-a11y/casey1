@@ -582,9 +582,6 @@ function MyScheduleView({ me, shifts, weeks, weekIdx, setWeekIdx }) {
   return (
     <div>
       <WeekSwitcher weeks={weeks} weekIdx={weekIdx} setWeekIdx={setWeekIdx} />
-      <div style={{ textAlign: "center", fontSize: 13, color: "var(--ink-soft)", marginBottom: 10 }}>
-        이번 주 총 근무시간: <strong style={{ color: "var(--ink)", fontFamily: "var(--font-mono)" }}>{totalHours}시간</strong>
-      </div>
       <div style={{ display: "grid", gap: 8 }}>
         {week?.dates.map((date) => {
           const shift = shifts.find((s) => s.date === date && s.empId === me.id) || null;
@@ -600,6 +597,9 @@ function MyScheduleView({ me, shifts, weeks, weekIdx, setWeekIdx }) {
             </div>
           );
         })}
+      </div>
+      <div style={{ textAlign: "center", fontSize: 13, color: "var(--ink-soft)", margin: "12px 0" }}>
+        이번 주 총 근무시간: <strong style={{ color: "var(--ink)", fontFamily: "var(--font-mono)" }}>{totalHours}시간</strong>
       </div>
       <Legend />
     </div>
