@@ -1,4 +1,4 @@
-import { handleBootstrap } from "./api/bootstrap.js";
+import { handleBootstrap, handleRefresh, handleRefreshCheck } from "./api/bootstrap.js";
 import { handleListRequests, handleCreateRequest } from "./api/requests.js";
 import { handleRespond, handleCancel } from "./api/requestActions.js";
 import { handleGenerateNextWeek } from "./api/generateNextWeek.js";
@@ -18,6 +18,14 @@ export default {
     try {
       if (pathname === "/api/bootstrap" && method === "GET") {
         return await handleBootstrap(env);
+      }
+
+      if (pathname === "/api/refresh" && method === "GET") {
+        return await handleRefresh(env);
+      }
+
+      if (pathname === "/api/refresh-check" && method === "GET") {
+        return await handleRefreshCheck(env);
       }
 
       if (pathname === "/api/requests" && method === "GET") {

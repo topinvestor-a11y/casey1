@@ -6,7 +6,7 @@ import {
   ShieldCheck, UserMinus, UserPlus, Lock, Download,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek, replaceEmployee, setShift, fetchShiftLog, findSwapBridge } from "./api";
+import { fetchBootstrap, fetchRefresh, fetchRefreshCheck, createRequest, respondToRequest, cancelRequest, generateNextWeek, replaceEmployee, setShift, fetchShiftLog, findSwapBridge } from "./api";
 
 const APP_NAME = "우리 근무표";
 const TAG_HUES = ["#3E6B49", "#46527D", "#C68A3D", "#8A5A6B", "#3E7A78", "#7A6B3E", "#5B5B8A"];
@@ -274,32 +274,37 @@ export default function App() {
   // After that, only genuinely new arrivals do.
   const seenIncomingIdsRef = useRef(null);
 
+  // Shared by both the full load and the light poll refresh — given a
+  // fresh requests array, figures out what's newly arrived for whoever's
+  // currently logged in and shows a toast if so.
+  const detectAndNotifyNewRequests = useCallback((requestsList) => {
+    const currentMe = meRef.current;
+    if (!currentMe) {
+      seenIncomingIdsRef.current = null;
+      return;
+    }
+    const pendingNow = requestsList.filter((r) => r.targetId === currentMe.id && r.status === "대기");
+    const pendingIds = new Set(pendingNow.map((r) => r.id));
+    const isFirstCheck = seenIncomingIdsRef.current === null;
+    const newlyArrived = isFirstCheck
+      ? pendingNow
+      : pendingNow.filter((r) => !seenIncomingIdsRef.current.has(r.id));
+
+    if (newlyArrived.length === 1) {
+      notify(`${newlyArrived[0].requesterName}님이 근무 교환을 요청했어요 — "받은 요청"에서 확인해주세요.`, "ok");
+    } else if (newlyArrived.length > 1) {
+      notify(`${newlyArrived[0].requesterName}님 외 ${newlyArrived.length - 1}건, 대기 중인 교환 요청이 있어요 — "받은 요청"에서 확인해주세요.`, "ok");
+    }
+
+    seenIncomingIdsRef.current = pendingIds;
+  }, [notify]);
+
   const load = useCallback(async (opts = {}) => {
     try {
       const data = await fetchBootstrap();
       setEmployees(data.employees);
       setShifts(data.shifts);
-
-      const currentMe = meRef.current;
-      if (currentMe) {
-        const pendingNow = data.requests.filter((r) => r.targetId === currentMe.id && r.status === "대기");
-        const pendingIds = new Set(pendingNow.map((r) => r.id));
-        const isFirstCheck = seenIncomingIdsRef.current === null;
-        const newlyArrived = isFirstCheck
-          ? pendingNow
-          : pendingNow.filter((r) => !seenIncomingIdsRef.current.has(r.id));
-
-        if (newlyArrived.length === 1) {
-          notify(`${newlyArrived[0].requesterName}님이 근무 교환을 요청했어요 — "받은 요청"에서 확인해주세요.`, "ok");
-        } else if (newlyArrived.length > 1) {
-          notify(`${newlyArrived[0].requesterName}님 외 ${newlyArrived.length - 1}건, 대기 중인 교환 요청이 있어요 — "받은 요청"에서 확인해주세요.`, "ok");
-        }
-
-        seenIncomingIdsRef.current = pendingIds;
-      } else {
-        seenIncomingIdsRef.current = null;
-      }
-
+      detectAndNotifyNewRequests(data.requests);
       setRequests(data.requests);
       setCodeTable(data.codeTable);
       setLoadError(null);
@@ -313,7 +318,46 @@ export default function App() {
         setReady(true);
       }
     }
-  }, [notify]);
+  }, [detectAndNotifyNewRequests]);
+
+  // The lightweight half of polling: just shifts + requests, no employees /
+  // code table / seat data (those almost never change, so re-reading them
+  // on every single poll was pure waste). Only called when
+  // /api/refresh-check says something actually changed.
+  const loadLight = useCallback(async () => {
+    try {
+      const data = await fetchRefresh();
+      setShifts(data.shifts);
+      detectAndNotifyNewRequests(data.requests);
+      setRequests(data.requests);
+    } catch {
+      // Silent by nature — a failed background poll just tries again next time.
+    }
+  }, [detectAndNotifyNewRequests]);
+
+  // What /api/refresh-check last reported. null = not established yet, so
+  // the very first check after mount always treats it as "unchanged" (the
+  // initial full load() already has fresh data) rather than triggering a
+  // redundant light-fetch immediately after.
+  const lastKnownChangeRef = useRef(undefined);
+
+  const pollCheck = useCallback(async () => {
+    try {
+      const { lastChangedAt } = await fetchRefreshCheck();
+      if (lastKnownChangeRef.current === undefined) {
+        // First check ever — just record the baseline, no fetch needed
+        // since the initial load() already has current data.
+        lastKnownChangeRef.current = lastChangedAt;
+        return;
+      }
+      if (lastChangedAt !== lastKnownChangeRef.current) {
+        lastKnownChangeRef.current = lastChangedAt;
+        await loadLight();
+      }
+    } catch {
+      // A failed cheap check just tries again next poll.
+    }
+  }, [loadLight]);
 
   useEffect(() => {
     const stored = localStorage.getItem(ME_KEY);
@@ -327,21 +371,22 @@ export default function App() {
     load();
   }, [load]);
 
-  // Light polling so a swap someone else approves shows up without a manual
-  // refresh — but skipped entirely while the tab is hidden (no point
+  // Background polling so a swap someone else approves shows up without a
+  // manual refresh — but skipped entirely while the tab is hidden (no point
   // reading D1 for a screen nobody's looking at), and triggered once
-  // immediately when the tab becomes visible again, so returning to it
-  // shows fresh data right away instead of waiting out the interval.
+  // immediately when the tab becomes visible again. Each tick only does the
+  // cheap /api/refresh-check; the actual data only gets re-fetched when
+  // that check reports something changed.
   useEffect(() => {
     const id = setInterval(() => {
       if (document.visibilityState === "visible") {
-        load({ silent: true });
+        pollCheck();
       }
     }, POLL_MS);
 
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        load({ silent: true });
+        pollCheck();
       }
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -350,16 +395,26 @@ export default function App() {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [load]);
+  }, [pollCheck]);
+
+  const requestsRef = useRef([]);
+  useEffect(() => {
+    requestsRef.current = requests;
+  }, [requests]);
 
   const chooseMe = useCallback((emp) => {
     seenIncomingIdsRef.current = null; // fresh baseline for the newly-chosen identity
+    meRef.current = emp; // sync immediately so the detection call below sees it
     setMe(emp);
     localStorage.setItem(ME_KEY, JSON.stringify(emp));
-  }, []);
+    // Using data already in state — no need to wait for the next poll to
+    // find out whether something's already waiting for this person.
+    detectAndNotifyNewRequests(requestsRef.current);
+  }, [detectAndNotifyNewRequests]);
 
   const switchUser = useCallback(() => {
     seenIncomingIdsRef.current = null;
+    meRef.current = null;
     setMe(null);
     localStorage.removeItem(ME_KEY);
   }, []);

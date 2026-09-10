@@ -19,6 +19,14 @@ export function fetchBootstrap() {
   return fetch("/api/bootstrap").then(handle);
 }
 
+export function fetchRefresh() {
+  return fetch("/api/refresh").then(handle);
+}
+
+export function fetchRefreshCheck() {
+  return fetch("/api/refresh-check").then(handle);
+}
+
 export function createRequest(payload) {
   return fetch("/api/requests", {
     method: "POST",
