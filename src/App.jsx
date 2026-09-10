@@ -10,7 +10,7 @@ import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generat
 const APP_NAME = "우리 근무표";
 const TAG_HUES = ["#3E6B49", "#46527D", "#C68A3D", "#8A5A6B", "#3E7A78", "#7A6B3E", "#5B5B8A"];
 const ME_KEY = "wt-me";
-const POLL_MS = 30000;
+const POLL_MS = 60000;
 
 /* ============================== HELPERS ============================== */
 function hueFor(id) {
