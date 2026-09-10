@@ -267,9 +267,10 @@ export default function App() {
 
   // Tracks which incoming-request IDs we've already seen, so a background
   // poll can tell "brand new request" apart from "already knew about it".
-  // null means "haven't established a baseline yet" — the very first load
-  // (or the load right after choosing an identity) should never itself
-  // trigger a notification, only loads after that.
+  // null means "haven't established a baseline yet" — on that first check
+  // for this identity, EVERY currently-pending request counts as "new" (so
+  // opening the app with something already waiting still notifies).
+  // After that, only genuinely new arrivals do.
   const seenIncomingIdsRef = useRef(null);
 
   const load = useCallback(async (opts = {}) => {
@@ -280,18 +281,20 @@ export default function App() {
 
       const currentMe = meRef.current;
       if (currentMe) {
-        const incomingPendingIds = new Set(
-          data.requests.filter((r) => r.targetId === currentMe.id && r.status === "대기").map((r) => r.id)
-        );
-        if (seenIncomingIdsRef.current) {
-          const newlyArrived = data.requests.filter(
-            (r) => r.targetId === currentMe.id && r.status === "대기" && !seenIncomingIdsRef.current.has(r.id)
-          );
-          for (const r of newlyArrived) {
-            notify(`${r.requesterName}님이 근무 교환을 요청했어요 — "받은 요청"에서 확인해주세요.`, "ok");
-          }
+        const pendingNow = data.requests.filter((r) => r.targetId === currentMe.id && r.status === "대기");
+        const pendingIds = new Set(pendingNow.map((r) => r.id));
+        const isFirstCheck = seenIncomingIdsRef.current === null;
+        const newlyArrived = isFirstCheck
+          ? pendingNow
+          : pendingNow.filter((r) => !seenIncomingIdsRef.current.has(r.id));
+
+        if (newlyArrived.length === 1) {
+          notify(`${newlyArrived[0].requesterName}님이 근무 교환을 요청했어요 — "받은 요청"에서 확인해주세요.`, "ok");
+        } else if (newlyArrived.length > 1) {
+          notify(`${newlyArrived[0].requesterName}님 외 ${newlyArrived.length - 1}건, 대기 중인 교환 요청이 있어요 — "받은 요청"에서 확인해주세요.`, "ok");
         }
-        seenIncomingIdsRef.current = incomingPendingIds;
+
+        seenIncomingIdsRef.current = pendingIds;
       } else {
         seenIncomingIdsRef.current = null;
       }
