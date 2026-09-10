@@ -1,12 +1,19 @@
 export async function handleBootstrap(env) {
   const db = env.DB;
 
+  // Only load a rolling window of shifts/requests, not the entire table's
+  // history — without this, every poll re-reads every week ever generated,
+  // and that grows without bound as weeks pile up (this is what blew past
+  // D1's free-tier daily row-read limit).
   const [employees, codeRows, shifts, requests, anchorRows] = await Promise.all([
     db.prepare("SELECT id, name, active FROM employees ORDER BY id").all(),
     db.prepare("SELECT code, day_label, night_label FROM code_table").all(),
     db
       .prepare(
-        "SELECT date, dow, emp_id as empId, emp_name as empName, period, code, label, swappable FROM shifts ORDER BY date, emp_id"
+        `SELECT date, dow, emp_id as empId, emp_name as empName, period, code, label, swappable
+         FROM shifts
+         WHERE date >= date('now', '-30 days')
+         ORDER BY date, emp_id`
       )
       .all(),
     db
@@ -16,7 +23,9 @@ export async function handleBootstrap(env) {
                 my_date as myDate, my_dow as myDow, my_code as myCode, my_period as myPeriod,
                 target_date as targetDate, target_dow as targetDow, target_code as targetCode, target_period as targetPeriod,
                 status, memo, processed_at as processedAt
-         FROM swap_requests ORDER BY created_at DESC`
+         FROM swap_requests
+         WHERE created_at >= datetime('now', '-30 days')
+         ORDER BY created_at DESC`
       )
       .all(),
     db.prepare("SELECT emp_id, seat, grp FROM anchor_week").all(),
