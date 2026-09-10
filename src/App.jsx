@@ -3,8 +3,9 @@ import {
   Sprout, Sun, Moon, ArrowLeftRight, Check, X, ChevronLeft, ChevronRight,
   Users, CalendarDays, Send, Inbox, Info, Search, RotateCcw, Clock3,
   ChevronDown, Leaf, Home, CircleDot, Sparkles, RefreshCw, AlertTriangle,
-  ShieldCheck, UserMinus, UserPlus, Lock,
+  ShieldCheck, UserMinus, UserPlus, Lock, Download,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { fetchBootstrap, createRequest, respondToRequest, cancelRequest, generateNextWeek, replaceEmployee, setShift, fetchShiftLog, findSwapBridge } from "./api";
 
 const APP_NAME = "우리 근무표";
@@ -667,13 +668,36 @@ function AllScheduleView({ employees, shifts, weeks, weekIdx, setWeekIdx, nextWe
   const filtered = sortBySeat(employees.filter((e) => e.name.includes(q.trim())), week?.dates[0]);
   const isLastWeek = weekIdx === weeks.length - 1;
 
+  const handleDownload = () => {
+    if (!week) return;
+    const header = ["직원", ...week.dates.map((d) => `${d.slice(5)} (${shifts.find((s) => s.date === d)?.dow || ""})`), "합계"];
+    const rows = filtered.map((emp) => {
+      const empShiftsThisWeek = week.dates.map((d) => shifts.find((s) => s.date === d && s.empId === emp.id) || null);
+      const cells = empShiftsThisWeek.map((s) => (s ? s.label : "비번"));
+      const total = weeklyTotalHours(empShiftsThisWeek.filter(Boolean));
+      return [emp.name, ...cells, `${total}시간`];
+    });
+    const sheetData = [header, ...rows];
+    const ws = XLSX.utils.aoa_to_sheet(sheetData);
+    ws["!cols"] = [{ wch: 10 }, ...week.dates.map(() => ({ wch: 12 })), { wch: 8 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "근무표");
+    const rangeSlug = `${week.dates[0]}~${week.dates[week.dates.length - 1]}`;
+    XLSX.writeFile(wb, `전체근무표_${week.label.replace(/\s/g, "")}_${rangeSlug}.xlsx`);
+  };
+
   return (
     <div>
       <WeekSwitcher weeks={weeks} weekIdx={weekIdx} setWeekIdx={setWeekIdx} />
       {isLastWeek && <AutoGeneratePanel plan={nextWeekPlan} onGenerate={onGenerate} />}
-      <div style={{ position: "relative", marginBottom: 10, maxWidth: 260 }}>
-        <Search size={14} style={{ position: "absolute", left: 10, top: 11, color: "var(--ink-soft)" }} />
-        <input type="text" placeholder="직원 검색" value={q} onChange={(e) => setQ(e.target.value)} style={{ paddingLeft: 30 }} />
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", maxWidth: 260, flex: 1 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 11, color: "var(--ink-soft)" }} />
+          <input type="text" placeholder="직원 검색" value={q} onChange={(e) => setQ(e.target.value)} style={{ paddingLeft: 30 }} />
+        </div>
+        <button className="btn btn-ghost" onClick={handleDownload}>
+          <Download size={14} /> 엑셀로 다운로드
+        </button>
       </div>
       <div className="card" style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
