@@ -231,6 +231,10 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [me, setMe] = useState(null);
+  const meRef = useRef(null);
+  useEffect(() => {
+    meRef.current = me;
+  }, [me]);
   const [employees, setEmployees] = useState([]);
   const [shifts, setShifts] = useState([]);
   const [requests, setRequests] = useState([]);
@@ -274,13 +278,14 @@ export default function App() {
       setEmployees(data.employees);
       setShifts(data.shifts);
 
-      if (me) {
+      const currentMe = meRef.current;
+      if (currentMe) {
         const incomingPendingIds = new Set(
-          data.requests.filter((r) => r.targetId === me.id && r.status === "대기").map((r) => r.id)
+          data.requests.filter((r) => r.targetId === currentMe.id && r.status === "대기").map((r) => r.id)
         );
         if (seenIncomingIdsRef.current) {
           const newlyArrived = data.requests.filter(
-            (r) => r.targetId === me.id && r.status === "대기" && !seenIncomingIdsRef.current.has(r.id)
+            (r) => r.targetId === currentMe.id && r.status === "대기" && !seenIncomingIdsRef.current.has(r.id)
           );
           for (const r of newlyArrived) {
             notify(`${r.requesterName}님이 근무 교환을 요청했어요 — "받은 요청"에서 확인해주세요.`, "ok");
@@ -304,7 +309,7 @@ export default function App() {
         setReady(true);
       }
     }
-  }, [me, notify]);
+  }, [notify]);
 
   useEffect(() => {
     const stored = localStorage.getItem(ME_KEY);
