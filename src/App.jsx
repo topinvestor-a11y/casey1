@@ -261,11 +261,36 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 10000);
   }, []);
 
+  // Tracks which incoming-request IDs we've already seen, so a background
+  // poll can tell "brand new request" apart from "already knew about it".
+  // null means "haven't established a baseline yet" — the very first load
+  // (or the load right after choosing an identity) should never itself
+  // trigger a notification, only loads after that.
+  const seenIncomingIdsRef = useRef(null);
+
   const load = useCallback(async (opts = {}) => {
     try {
       const data = await fetchBootstrap();
       setEmployees(data.employees);
       setShifts(data.shifts);
+
+      if (me) {
+        const incomingPendingIds = new Set(
+          data.requests.filter((r) => r.targetId === me.id && r.status === "대기").map((r) => r.id)
+        );
+        if (seenIncomingIdsRef.current) {
+          const newlyArrived = data.requests.filter(
+            (r) => r.targetId === me.id && r.status === "대기" && !seenIncomingIdsRef.current.has(r.id)
+          );
+          for (const r of newlyArrived) {
+            notify(`${r.requesterName}님이 근무 교환을 요청했어요 — "받은 요청"에서 확인해주세요.`, "ok");
+          }
+        }
+        seenIncomingIdsRef.current = incomingPendingIds;
+      } else {
+        seenIncomingIdsRef.current = null;
+      }
+
       setRequests(data.requests);
       setCodeTable(data.codeTable);
       setLoadError(null);
@@ -279,7 +304,7 @@ export default function App() {
         setReady(true);
       }
     }
-  }, []);
+  }, [me, notify]);
 
   useEffect(() => {
     const stored = localStorage.getItem(ME_KEY);
@@ -300,11 +325,13 @@ export default function App() {
   }, [load]);
 
   const chooseMe = useCallback((emp) => {
+    seenIncomingIdsRef.current = null; // fresh baseline for the newly-chosen identity
     setMe(emp);
     localStorage.setItem(ME_KEY, JSON.stringify(emp));
   }, []);
 
   const switchUser = useCallback(() => {
+    seenIncomingIdsRef.current = null;
     setMe(null);
     localStorage.removeItem(ME_KEY);
   }, []);
