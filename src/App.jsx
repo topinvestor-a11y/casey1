@@ -326,10 +326,29 @@ export default function App() {
     load();
   }, [load]);
 
-  // Light polling so a swap someone else approves shows up without a manual refresh.
+  // Light polling so a swap someone else approves shows up without a manual
+  // refresh — but skipped entirely while the tab is hidden (no point
+  // reading D1 for a screen nobody's looking at), and triggered once
+  // immediately when the tab becomes visible again, so returning to it
+  // shows fresh data right away instead of waiting out the interval.
   useEffect(() => {
-    const id = setInterval(() => load({ silent: true }), POLL_MS);
-    return () => clearInterval(id);
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        load({ silent: true });
+      }
+    }, POLL_MS);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        load({ silent: true });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [load]);
 
   const chooseMe = useCallback((emp) => {
