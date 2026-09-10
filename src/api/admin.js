@@ -1,4 +1,5 @@
 import { checkTwelveHourRest } from "./restCheck.js";
+import { touchChanged } from "./changeTracker.js";
 
 // POST /api/admin/replace-employee
 // body: { pin, retiringEmpId, newEmployeeName }
@@ -151,6 +152,10 @@ export async function handleSetShift(request, env) {
 
   const result = await assignShift(db, empId, emp.name, date, code, period, "관리자 직접 수정");
   if (result.error) {
+    // Even on this error path, assignShift may have already freed a
+    // duplicate-slot holder before the rest-check failed — touch the
+    // tracker just in case something did get written.
+    await touchChanged(db);
     return Response.json({ error: result.error }, { status: result.status });
   }
 
@@ -162,6 +167,8 @@ export async function handleSetShift(request, env) {
     }
     substituteResult = { empId: sub.id, name: sub.name, code: vacatedShift.code, period: vacatedShift.period, label: subResult.label };
   }
+
+  await touchChanged(db);
 
   return Response.json({ ...result, substitute: substituteResult });
 }

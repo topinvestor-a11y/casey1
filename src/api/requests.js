@@ -1,4 +1,5 @@
 import { planReciprocalSwap } from "./swapPlan.js";
+import { touchChanged } from "./changeTracker.js";
 
 function uid() {
   return crypto.randomUUID();
@@ -122,6 +123,8 @@ export async function handleCreateRequest(request, env) {
       memo || ""
     )
     .run();
+
+  await touchChanged(db);
 
   return Response.json({ id, createdAt, status: "대기" });
 }

@@ -1,4 +1,5 @@
 import { checkRestForFinalStates } from "./restCheck.js";
+import { touchChanged } from "./changeTracker.js";
 
 export async function handleRespond(id, request, env) {
   const db = env.DB;
@@ -169,6 +170,8 @@ export async function handleRespond(id, request, env) {
     await db.prepare("UPDATE swap_requests SET status = '거절', processed_at = ? WHERE id = ?").bind(processedAt, id).run();
   }
 
+  await touchChanged(db);
+
   return Response.json({ id, status: accept ? "완료" : "거절", processedAt });
 }
 
@@ -183,6 +186,8 @@ export async function handleCancel(id, env) {
 
   const processedAt = new Date().toISOString();
   await db.prepare("UPDATE swap_requests SET status = '취소', processed_at = ? WHERE id = ?").bind(processedAt, id).run();
+
+  await touchChanged(db);
 
   return Response.json({ id, status: "취소", processedAt });
 }

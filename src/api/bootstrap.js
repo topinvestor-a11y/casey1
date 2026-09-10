@@ -1,3 +1,5 @@
+const SHIFT_WINDOW_DAYS = 30;
+
 export async function handleBootstrap(env) {
   const db = env.DB;
 
@@ -12,7 +14,7 @@ export async function handleBootstrap(env) {
       .prepare(
         `SELECT date, dow, emp_id as empId, emp_name as empName, period, code, label, swappable
          FROM shifts
-         WHERE date >= date('now', '-30 days')
+         WHERE date >= date('now', '-${SHIFT_WINDOW_DAYS} days')
          ORDER BY date, emp_id`
       )
       .all(),
@@ -24,7 +26,7 @@ export async function handleBootstrap(env) {
                 target_date as targetDate, target_dow as targetDow, target_code as targetCode, target_period as targetPeriod,
                 status, memo, processed_at as processedAt
          FROM swap_requests
-         WHERE created_at >= datetime('now', '-30 days')
+         WHERE created_at >= datetime('now', '-${SHIFT_WINDOW_DAYS} days')
          ORDER BY created_at DESC`
       )
       .all(),
@@ -52,4 +54,53 @@ export async function handleBootstrap(env) {
     shifts: shifts.results.map((s) => ({ ...s, swappable: !!s.swappable })),
     requests: requests.results,
   });
+}
+
+// GET /api/refresh — a lightweight version of bootstrap for the recurring
+// background poll. Employees, the code table, and seat assignments almost
+// never change, so re-reading all three of them on every single poll (as
+// the full bootstrap does) was pure waste — this endpoint returns only the
+// two tables that actually change on a normal day: shifts and requests.
+export async function handleRefresh(env) {
+  const db = env.DB;
+
+  const [shifts, requests] = await Promise.all([
+    db
+      .prepare(
+        `SELECT date, dow, emp_id as empId, emp_name as empName, period, code, label, swappable
+         FROM shifts
+         WHERE date >= date('now', '-${SHIFT_WINDOW_DAYS} days')
+         ORDER BY date, emp_id`
+      )
+      .all(),
+    db
+      .prepare(
+        `SELECT id, created_at as createdAt, requester_id as requesterId, requester_name as requesterName,
+                target_id as targetId, target_name as targetName,
+                my_date as myDate, my_dow as myDow, my_code as myCode, my_period as myPeriod,
+                target_date as targetDate, target_dow as targetDow, target_code as targetCode, target_period as targetPeriod,
+                status, memo, processed_at as processedAt
+         FROM swap_requests
+         WHERE created_at >= datetime('now', '-${SHIFT_WINDOW_DAYS} days')
+         ORDER BY created_at DESC`
+      )
+      .all(),
+  ]);
+
+  return Response.json({
+    shifts: shifts.results.map((s) => ({ ...s, swappable: !!s.swappable })),
+    requests: requests.results,
+  });
+}
+
+// GET /api/refresh-check — the cheap half of the polling loop. Reads a
+// single row from app_state (a tiny table bumped by every mutation that
+// touches shifts or swap_requests) and returns just that timestamp. The
+// client compares it to what it already has: unchanged means skip the
+// expensive fetch entirely, which is what most 60-second polls will do on
+// an ordinary day. Only a genuine change triggers the real /api/refresh call.
+export async function handleRefreshCheck(env) {
+  const db = env.DB;
+  const row = await db.prepare("SELECT last_changed_at FROM app_state WHERE id = 1").first();
+  return Response.json({ lastChangedAt: row ? row.last_changed_at : null });
 }
