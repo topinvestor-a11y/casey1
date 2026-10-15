@@ -1,4 +1,10 @@
 const SHIFT_WINDOW_DAYS = 30;
+// Cutoff for the shifts window, snapped back to the Monday of that week.
+// A raw "30 days ago" lands on an arbitrary weekday, which leaves the
+// oldest loaded week starting mid-week (e.g. on a Tuesday) — weeks must
+// always be loaded whole. (-6 days then "weekday 1" = Monday of the week
+// containing the raw cutoff.)
+const SHIFT_CUTOFF_SQL = `date('now', '-${SHIFT_WINDOW_DAYS + 6} days', 'weekday 1')`;
 
 export async function handleBootstrap(env) {
   const db = env.DB;
@@ -14,7 +20,7 @@ export async function handleBootstrap(env) {
       .prepare(
         `SELECT date, dow, emp_id as empId, emp_name as empName, period, code, label, swappable
          FROM shifts
-         WHERE date >= date('now', '-${SHIFT_WINDOW_DAYS} days')
+         WHERE date >= ${SHIFT_CUTOFF_SQL}
          ORDER BY date, emp_id`
       )
       .all(),
@@ -69,7 +75,7 @@ export async function handleRefresh(env) {
       .prepare(
         `SELECT date, dow, emp_id as empId, emp_name as empName, period, code, label, swappable
          FROM shifts
-         WHERE date >= date('now', '-${SHIFT_WINDOW_DAYS} days')
+         WHERE date >= ${SHIFT_CUTOFF_SQL}
          ORDER BY date, emp_id`
       )
       .all(),
