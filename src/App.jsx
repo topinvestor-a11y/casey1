@@ -18,30 +18,56 @@ function hueFor(id) {
   return TAG_HUES[id % TAG_HUES.length];
 }
 
+function mondayOfDate(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const back = (dt.getUTCDay() + 6) % 7; // Mon=0 ... Sun=6
+  dt.setUTCDate(dt.getUTCDate() - back);
+  return dt.toISOString().slice(0, 10);
+}
+
+// Which month a Monday-start week "belongs" to: whichever month most of its
+// 7 days fall in (08-31~09-06 is a September week).
+function owningMonthOfWeek(monday) {
+  const counts = {};
+  for (let i = 0; i < 7; i++) {
+    const m = Number(dateAdd(monday, i).split("-")[1]);
+    counts[m] = (counts[m] || 0) + 1;
+  }
+  return Number(Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]);
+}
+
 function buildWeeks(shifts) {
   const dates = Array.from(new Set(shifts.map((s) => s.date))).sort();
+  // Group by real calendar week (Monday start) rather than cutting every 7
+  // dates: the loaded data is a rolling window whose first date can be any
+  // weekday, and cutting by count would push every week off Monday.
+  const byMonday = new Map();
+  for (const d of dates) {
+    const mon = mondayOfDate(d);
+    if (!byMonday.has(mon)) byMonday.set(mon, []);
+    byMonday.get(mon).push(d);
+  }
+  const fmt = (d) => {
+    const [, m, day] = d.split("-");
+    return `${m}.${day}`;
+  };
   const weeks = [];
-  const weekCountByMonth = {};
-  for (let i = 0; i < dates.length; i += 7) {
-    const chunk = dates.slice(i, i + 7);
-    if (chunk.length === 0) continue;
-    const fmt = (d) => {
-      const [, m, day] = d.split("-");
-      return `${m}.${day}`;
-    };
-    // Which month "owns" this week: whichever month most of its days fall
-    // in (e.g. 08-31~09-06 is mostly September, so it's a September week).
-    const dayCountByMonth = {};
-    for (const d of chunk) {
-      const m = Number(d.split("-")[1]);
-      dayCountByMonth[m] = (dayCountByMonth[m] || 0) + 1;
+  for (const [monday, chunk] of byMonday) {
+    const month = owningMonthOfWeek(monday);
+    // Week-of-month counted from the calendar, not from what happens to be
+    // loaded — otherwise labels would shift as old weeks age out of the window.
+    let n = 1;
+    let prev = dateAdd(monday, -7);
+    while (owningMonthOfWeek(prev) === month) {
+      n++;
+      prev = dateAdd(prev, -7);
     }
-    const month = Number(Object.entries(dayCountByMonth).sort((a, b) => b[1] - a[1])[0][0]);
-    weekCountByMonth[month] = (weekCountByMonth[month] || 0) + 1;
     weeks.push({
-      label: `${month}월 ${weekCountByMonth[month]}주차`,
+      label: `${month}월 ${n}주차`,
       range: `${fmt(chunk[0])} ~ ${fmt(chunk[chunk.length - 1])}`,
       dates: chunk,
+      monday,
     });
   }
   return weeks;
@@ -578,7 +604,7 @@ export default function App() {
 
 /* ============================== NAME GATE ============================== */
 function NameGate({ employees, weeks, search, setSearch, onChoose }) {
-  const latestMonday = weeks?.length ? weeks[weeks.length - 1].dates[0] : null;
+  const latestMonday = weeks?.length ? weeks[weeks.length - 1].monday : null;
   const filtered = sortBySeat(employees.filter((e) => e.active !== false && e.name.includes(search.trim())), latestMonday);
   return (
     <div style={{ maxWidth: 720, margin: "0 auto" }}>
@@ -720,7 +746,7 @@ function MyScheduleView({ me, shifts, weeks, weekIdx, setWeekIdx }) {
 function AllScheduleView({ employees, shifts, weeks, weekIdx, setWeekIdx, nextWeekPlan, onGenerate }) {
   const week = weeks[weekIdx];
   const [q, setQ] = useState("");
-  const filtered = sortBySeat(employees.filter((e) => e.name.includes(q.trim())), week?.dates[0]);
+  const filtered = sortBySeat(employees.filter((e) => e.name.includes(q.trim())), week?.monday);
   const isLastWeek = weekIdx === weeks.length - 1;
 
   const handleDownload = () => {
@@ -999,7 +1025,7 @@ function NewSwapForm({ me, employees, shifts, weeks, onSubmit }) {
       <Field label="2. 교환 상대">
         <select value={targetId} onChange={(e) => { setTargetId(e.target.value); setTargetDate(""); }}>
           <option value="">직원 선택</option>
-          {sortBySeat(employees.filter((e) => e.id !== me.id && e.active !== false), visibleWeeks[visibleWeeks.length - 1]?.dates[0]).map((e) => (
+          {sortBySeat(employees.filter((e) => e.id !== me.id && e.active !== false), visibleWeeks[visibleWeeks.length - 1]?.monday).map((e) => (
             <option key={e.id} value={e.id}>{e.name}</option>
           ))}
         </select>
@@ -1172,7 +1198,7 @@ function AdminView({ employees, requests, codeTable, weeks, labelFor, onReplace,
   const [unlocked, setUnlocked] = useState(false);
   const [pinError, setPinError] = useState("");
 
-  const latestMonday = weeks?.length ? weeks[weeks.length - 1].dates[0] : null;
+  const latestMonday = weeks?.length ? weeks[weeks.length - 1].monday : null;
   const activeEmployees = sortBySeat(employees.filter((e) => e.active !== false), latestMonday);
   const pendingRequests = requests.filter((r) => r.status === "대기").sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
