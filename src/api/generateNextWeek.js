@@ -43,25 +43,45 @@ export async function handleGenerateNextWeek(request, env) {
 
   const db = env.DB;
 
-  // Only count a date as a real "generated day" if it has a substantial
-  // number of rows — a sparse manual entry (leave set far in advance for
-  // just one person) shouldn't be mistaken for an already-generated week.
-  const lastRow = await db
-    .prepare(
-      "SELECT MAX(date) as maxDate FROM (SELECT date, COUNT(*) as n FROM shifts GROUP BY date HAVING n > 5)"
-    )
-    .first();
-  const lastDate = lastRow && lastRow.maxDate;
-  if (!lastDate) {
-    return Response.json({ error: "기준이 될 근무 데이터가 없어요." }, { status: 400 });
+  let nextMonday;
+  if (body.weekStart) {
+    // 복구용: 지정한 주(월요일)를 생성한다.
+    // 로테이션이 ANCHOR_MONDAY 기준으로 계산되므로, 중간 주가 비어 있어도
+    // 원하는 주만 골라서 만들 수 있다.
+    const ws = String(body.weekStart);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ws)) {
+      return Response.json({ error: "weekStart는 YYYY-MM-DD 형식이어야 해요." }, { status: 400 });
+    }
+    const diff = daysBetween(ANCHOR_MONDAY, ws);
+    if (diff < 0 || diff % 7 !== 0) {
+      return Response.json(
+        { error: `weekStart는 ${ANCHOR_MONDAY} 이후의 근무표 기준 월요일 날짜여야 해요.` },
+        { status: 400 }
+      );
+    }
+    nextMonday = ws;
+  } else {
+    // Only count a date as a real "generated day" if it has a substantial
+    // number of rows — a sparse manual entry (leave set far in advance for
+    // just one person) shouldn't be mistaken for an already-generated week.
+    const lastRow = await db
+      .prepare(
+        "SELECT MAX(date) as maxDate FROM (SELECT date, COUNT(*) as n FROM shifts GROUP BY date HAVING n > 5)"
+      )
+      .first();
+    const lastDate = lastRow && lastRow.maxDate;
+    if (!lastDate) {
+      return Response.json({ error: "기준이 될 근무 데이터가 없어요." }, { status: 400 });
+    }
+
+    // Round up to the next full Monday-start week boundary relative to the
+    // anchor, rather than just "lastDate + 1" — a sparse future date (e.g. a
+    // leave entry set far in advance) can otherwise push lastDate past the
+    // actual latest generated week and throw this off.
+    const weekOffsetOfLastDate = Math.floor(daysBetween(ANCHOR_MONDAY, lastDate) / 7);
+    nextMonday = dateAdd(ANCHOR_MONDAY, (weekOffsetOfLastDate + 1) * 7);
   }
 
-  // Round up to the next full Monday-start week boundary relative to the
-  // anchor, rather than just "lastDate + 1" — a sparse future date (e.g. a
-  // leave entry set far in advance) can otherwise push lastDate past the
-  // actual latest generated week and throw this off.
-  const weekOffsetOfLastDate = Math.floor(daysBetween(ANCHOR_MONDAY, lastDate) / 7);
-  const nextMonday = dateAdd(ANCHOR_MONDAY, (weekOffsetOfLastDate + 1) * 7);
   const exists = await db.prepare("SELECT COUNT(*) as n FROM shifts WHERE date = ?").bind(nextMonday).first();
   // A handful of rows can come from a manually-set entry (leave, edit) made
   // in advance for that date — only a week that's actually been generated
