@@ -782,11 +782,11 @@ function AllScheduleView({ employees, shifts, weeks, weekIdx, setWeekIdx, nextWe
           <Download size={14} /> 엑셀로 다운로드
         </button>
       </div>
-      <div className="card" style={{ overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+      <div className="card" style={{ overflow: "auto", maxHeight: "calc(100dvh - 200px)" }}>
+        <table style={{ borderCollapse: "separate", borderSpacing: 0, width: "100%", fontSize: 13 }}>
           <thead>
             <tr>
-              <th style={thStyle("left")}>직원</th>
+              <th style={{ ...thStyle("left"), left: 0, zIndex: 3 }}>직원</th>
               {week?.dates.map((d) => {
                 const dow = shifts.find((s) => s.date === d)?.dow || "";
                 return (
@@ -802,7 +802,7 @@ function AllScheduleView({ employees, shifts, weeks, weekIdx, setWeekIdx, nextWe
           <tbody>
             {filtered.map((emp, i) => (
               <tr key={emp.id} style={{ background: i % 2 ? "var(--surface-2)" : "transparent" }}>
-                <td style={{ ...tdStyle, fontWeight: 600, whiteSpace: "nowrap", position: "sticky", left: 0, background: i % 2 ? "var(--surface-2)" : "var(--surface)" }}>
+                <td style={{ ...tdStyle, fontWeight: 600, whiteSpace: "nowrap", position: "sticky", left: 0, zIndex: 1, background: i % 2 ? "var(--surface-2)" : "var(--surface)" }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                     <span style={{ width: 7, height: 7, borderRadius: 999, background: hueFor(emp.id), display: "inline-block" }} />
                     {emp.name}
@@ -831,7 +831,7 @@ function AllScheduleView({ employees, shifts, weeks, weekIdx, setWeekIdx, nextWe
     </div>
   );
 }
-const thStyle = (align) => ({ textAlign: align, padding: "8px 10px", borderBottom: "1.5px solid var(--line)", fontWeight: 600, color: "var(--ink-soft)", fontSize: 11.5 });
+const thStyle = (align) => ({ textAlign: align, padding: "8px 10px", borderBottom: "1.5px solid var(--line)", fontWeight: 600, color: "var(--ink-soft)", fontSize: 11.5, position: "sticky", top: 0, zIndex: 2, background: "var(--surface)" });
 const tdStyle = { padding: "7px 10px", borderBottom: "1px solid var(--line)" };
 
 /* ============================== AUTO-GENERATE PANEL ============================== */
@@ -907,12 +907,12 @@ function Legend() {
       </button>
       {open && (
         <div style={{ marginTop: 10, fontSize: 12.5, color: "var(--ink-soft)", display: "grid", gap: 6 }}>
-          <div>1F,1B,1D,1,3,5,5A: (주/야 12HRS, 07~19, 19~07)</div>
-          <div>10E 1000-1800</div>
-          <div>6E 0600-1400</div>
-          <div>20W 2000-0800(야간)</div>
-          <div><ShiftChip shift={{ code: "6V", period: "주간", label: "주간6V" }} compact />6V <span style={{ fontFamily: "var(--font-mono)" }}>0600-1400(월~금)</span></div>
-          <div><ShiftChip shift={{ code: "N", period: "주간", label: "주간N" }} compact /> N · N1 <span style={{ fontFamily: "var(--font-mono)" }}>06:00–18:00</span> — 평일 주간 전용, 토·일요일은 배정하지 않아요.</div>
+          <div><ShiftChip shift={{ code: "", period: "주야", label: "주야" }} compact />1F,1B,1D,1,3,5,5A: <span style={{ fontFamily: "var(--font-mono)" }}>(주/야 12HRS, 07~19, 19~07)</span></div>
+          <div><ShiftChip shift={{ code: "10E", period: "주간", label: "주간10E" }} compact /> 10E: <span style={{ fontFamily: "var(--font-mono)" }}>1000-1800</span></div>
+          <div><ShiftChip shift={{ code: "6E", period: "주간", label: "주간6E" }} compact /> 6E: <span style={{ fontFamily: "var(--font-mono)" }}>0600-1400</span></div>
+          <div><ShiftChip shift={{ code: "20W", period: "주간", label: "야간20W" }} compact /> 20W: <span style={{ fontFamily: "var(--font-mono)" }}>2000-0800(야간)</span></div>
+          <div><ShiftChip shift={{ code: "6V", period: "주간", label: "주간6V" }} compact /> 6V: <span style={{ fontFamily: "var(--font-mono)" }}>0600-1400(월~금)</span> — 평일 주간 전용, 토·일요일은 배정하지 않아요.</div>
+          <div><ShiftChip shift={{ code: "N", period: "주간", label: "주간N" }} compact /> N · N1: <span style={{ fontFamily: "var(--font-mono)" }}>06:00–18:00</span> — 평일 주간 전용, 토·일요일은 배정하지 않아요.</div>
         </div>
       )}
     </div>
