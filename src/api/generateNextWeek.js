@@ -1,9 +1,31 @@
 import { touchChanged } from "./changeTracker.js";
 
+// 주 단위 정렬 기준 월요일 (기존 로테이션 기준일). weekStart 검증과 "다음 주" 계산에 사용.
 const ANCHOR_MONDAY = "2026-09-07";
-const GROUP_A_SEATS = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
-const GROUP_B_SEATS = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36];
 const WEEKDAY_ORDER = ["월", "화", "수", "목", "금", "토", "일"];
+
+const range = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+// 기존 근무 원본 (12/07 이전 주에 사용)
+const ROSTER_OLD = {
+  anchorMonday: ANCHOR_MONDAY,
+  groupA: [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+  groupB: range(20, 36),
+  anchorTable: "anchor_week",
+  templateTable: "seat_template",
+};
+// 새 근무 원본 (2026-12-07 주부터 사용, 웹앱샘플시간표.xlsx 기준)
+const ROSTER_V2_START = "2026-12-07";
+const ROSTER_V2 = {
+  anchorMonday: ROSTER_V2_START,
+  groupA: range(1, 18),
+  groupB: range(19, 34),
+  anchorTable: "anchor_week_v2",
+  templateTable: "seat_template_v2",
+};
+function rosterFor(monday) {
+  return monday >= ROSTER_V2_START ? ROSTER_V2 : ROSTER_OLD;
+}
 
 function dateAdd(dateStr, days) {
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -19,8 +41,8 @@ function daysBetween(a, b) {
   const [by, bm, bd] = b.split("-").map(Number);
   return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000);
 }
-function advanceSeat(seat, steps, group) {
-  const order = group === "A" ? GROUP_A_SEATS : GROUP_B_SEATS;
+function advanceSeat(seat, steps, group, roster) {
+  const order = group === "A" ? roster.groupA : roster.groupB;
   const idx = order.indexOf(seat);
   if (idx === -1) return seat;
   const n = order.length;
@@ -90,13 +112,14 @@ export async function handleGenerateNextWeek(request, env) {
     return Response.json({ error: `${nextMonday} 주는 이미 생성되어 있어요.`, alreadyExists: true }, { status: 409 });
   }
 
-  const weekOffset = Math.round(daysBetween(ANCHOR_MONDAY, nextMonday) / 7);
+  const roster = rosterFor(nextMonday);
+  const weekOffset = Math.round(daysBetween(roster.anchorMonday, nextMonday) / 7);
   const weekDates = WEEKDAY_ORDER.map((_, i) => dateAdd(nextMonday, i));
 
   const [employeesRes, anchorRes, templateRes, codeRes] = await Promise.all([
     db.prepare("SELECT id, name FROM employees WHERE active = 1").all(),
-    db.prepare("SELECT emp_id, seat, grp FROM anchor_week").all(),
-    db.prepare("SELECT seat, dow, period, code FROM seat_template").all(),
+    db.prepare(`SELECT emp_id, seat, grp FROM ${roster.anchorTable}`).all(),
+    db.prepare(`SELECT seat, dow, period, code FROM ${roster.templateTable}`).all(),
     db.prepare("SELECT code, day_label, night_label FROM code_table").all(),
   ]);
 
@@ -121,7 +144,7 @@ export async function handleGenerateNextWeek(request, env) {
   for (const emp of employeesRes.results) {
     const anchor = anchorByEmp[emp.id];
     if (!anchor) continue;
-    const seat = advanceSeat(anchor.seat, weekOffset, anchor.group);
+    const seat = advanceSeat(anchor.seat, weekOffset, anchor.group, roster);
     const seatTemplate = template[seat] || {};
     WEEKDAY_ORDER.forEach((dow, i) => {
       const entry = seatTemplate[dow];
