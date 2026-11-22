@@ -911,7 +911,7 @@ function Legend() {
           <div>10E 1000-1800</div>
           <div>6E 0600-1400</div>
           <div>20W 2000-0800(야간)</div>
-          <div>6V 0600-1400(월~금)</div>
+          <div><ShiftChip shift={{ code: "6V", period: "주간", label: "주간6V" }} compact />6V <span style={{ fontFamily: "var(--font-mono)" }}>0600-1400(월~금)</span></div>
           <div><ShiftChip shift={{ code: "N", period: "주간", label: "주간N" }} compact /> N · N1 <span style={{ fontFamily: "var(--font-mono)" }}>06:00–18:00</span> — 평일 주간 전용, 토·일요일은 배정하지 않아요.</div>
         </div>
       )}
