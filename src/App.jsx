@@ -739,7 +739,7 @@ function MyScheduleView({ me, shifts, weeks, weekIdx, setWeekIdx }) {
       <div style={{ textAlign: "center", fontSize: 13, color: "var(--ink-soft)", margin: "12px 0" }}>
         이번 주 총 근무시간: <strong style={{ color: "var(--ink)", fontFamily: "var(--font-mono)" }}>{totalHours}시간</strong>
       </div>
-      < />
+      <Legend />
     </div>
   );
 }
