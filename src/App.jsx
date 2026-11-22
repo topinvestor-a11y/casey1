@@ -739,7 +739,7 @@ function MyScheduleView({ me, shifts, weeks, weekIdx, setWeekIdx }) {
       <div style={{ textAlign: "center", fontSize: 13, color: "var(--ink-soft)", margin: "12px 0" }}>
         이번 주 총 근무시간: <strong style={{ color: "var(--ink)", fontFamily: "var(--font-mono)" }}>{totalHours}시간</strong>
       </div>
-      <Legend />
+      < />
     </div>
   );
 }
@@ -907,11 +907,12 @@ function Legend() {
       </button>
       {open && (
         <div style={{ marginTop: 10, fontSize: 12.5, color: "var(--ink-soft)", display: "grid", gap: 6 }}>
-          <div><ShiftChip shift={{ code: "1C", period: "주간", label: "주간1C" }} compact /> 1C · 3A · 3B <span style={{ fontFamily: "var(--font-mono)" }}>주간 05:00–15:00</span></div>
-          <div><ShiftChip shift={{ code: "1C", period: "야간", label: "야간1C" }} compact /> 1C · 3A <span style={{ fontFamily: "var(--font-mono)" }}>야간 15:00–01:00</span> · 3B <span style={{ fontFamily: "var(--font-mono)" }}>야간 15:00–20:00</span></div>
+          <div>1F,1B,1D,1,3,5,5A: (주/야 12HRS, 07~19, 19~07)</div>
+          <div>10E 1000-1800</div>
+          <div>6E 0600-1400</div>
+          <div>20W 2000-0800(야간)</div>
+          <div>6V 0600-1400(월~금)</div>
           <div><ShiftChip shift={{ code: "N", period: "주간", label: "주간N" }} compact /> N · N1 <span style={{ fontFamily: "var(--font-mono)" }}>06:00–18:00</span> — 평일 주간 전용, 토·일요일은 배정하지 않아요.</div>
-          <div style={{ color: "var(--ink-soft)" }}>표시가 없는 코드는 회사 근무 규정을 따라요.</div>
-          <div style={{ color: "var(--ink-soft)" }}>근무 자리는 매주 A조·B조 그룹 안에서 한 칸씩 자동으로 순환돼요.</div>
         </div>
       )}
     </div>
