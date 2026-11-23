@@ -907,7 +907,7 @@ function Legend() {
       </button>
       {open && (
         <div style={{ marginTop: 10, fontSize: 12.5, color: "var(--ink-soft)", display: "grid", gap: 6 }}>
-          <div><ShiftChip shift={{ code: "주야", period: "주야", label: "주야" }} compact /> 1F,1B,1D,1,3,5,5A: <span style={{ fontFamily: "var(--font-mono)" }}>(주/야 12HRS, 07~19, 19~07)</span></div>
+          <div><ShiftChip shift={{ code: "주야", period: "", label: "주야" }} compact /> 1F,1B,1D,1,3,5,5A: <span style={{ fontFamily: "var(--font-mono)" }}>(주/야 12HRS, 07~19, 19~07)</span></div>
           <div><ShiftChip shift={{ code: "10E", period: "주간", label: "주간10E" }} compact /> 10E: <span style={{ fontFamily: "var(--font-mono)" }}>1000-1800</span> — 10시 에코부스 출근.</div>
           <div><ShiftChip shift={{ code: "6E", period: "주간", label: "주간6E" }} compact /> 6E: <span style={{ fontFamily: "var(--font-mono)" }}>0600-1400</span> — 06시 에코부스 출근.</div>
           <div><ShiftChip shift={{ code: "20W", period: "야간", label: "야간20W" }} compact /> 20W: <span style={{ fontFamily: "var(--font-mono)" }}>2000-0800(야간) — 20시 웍스루 출근.</span></div>
