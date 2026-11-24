@@ -201,6 +201,17 @@ const CODE_HOURS = {
   "3B": { day: "05:00–15:00", night: "15:00–20:00" },
   N: { day: "06:00–18:00", night: null },
   N1: { day: "06:00–18:00", night: null },
+  "1": { day: "07:00–19:00", night: "19:00–07:00" },
+  "1B": { day: "07:00–19:00", night: "19:00–07:00" },
+  "1D": { day: "07:00–19:00", night: "19:00–07:00" },
+  "1F": { day: "07:00–19:00", night: "19:00–07:00" },
+  "3": { day: "07:00–19:00", night: "19:00–07:00" },
+  "5": { day: "07:00–19:00", night: "19:00–07:00" },
+  "5A": { day: "07:00–19:00", night: "19:00–07:00" },
+  "10E": { day: "10:00–18:00", night: null },
+  "6E": { day: "06:00–14:00", night: null },
+  "6V": { day: "06:00–14:00", night: null },
+  "20W": { day: null, night: "20:00–08:00" },
 };
 function hoursFor(code, period) {
   const h = CODE_HOURS[code];
@@ -244,7 +255,9 @@ function PlantTag({ name, hue, size = "md", active = false, onClick, disabled })
 function ShiftChip({ shift, compact }) {
   if (!shift) return <span className="chip chip-empty">비번</span>;
   const isNight = shift.period === "야간";
-  const hrs = hoursFor(shift.code, shift.period);
+  const clock = hoursFor(shift.code, shift.period);
+  const dur = shiftHours(shift.code, shift.period);
+  const hrs = clock || (dur ? `${dur}시간` : null);
   const prefix = isNight ? "야" : "주";
   return (
     <span className={`chip ${isNight ? "chip-night" : "chip-day"}`} title={hrs ? `${shift.label} · ${hrs}` : shift.label}>
